@@ -1,0 +1,65 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "enginesave/export-batch.schema.json",
+  "title": "enginesave export --all --json",
+  "description": "Output of `enginesave export ... --all --json` or with several --game (0.4.0, D27): the latest snapshot of each record into one folder. The exit code is 1 when any item failed.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["kind", "location", "exported", "skipped", "failed", "items"],
+  "properties": {
+    "kind": { "const": "export" },
+    "location": { "type": "string", "description": "the folder the archives were written to" },
+    "exported": { "type": "integer" },
+    "skipped": { "type": "integer" },
+    "failed": { "type": "integer" },
+    "items": { "type": "array", "items": { "$ref": "#/$defs/item" } },
+    "cancelled": { "const": true, "description": "0.9.0 (D58): only when it was stopped between archives; items are the records done" }
+  },
+  "$defs": {
+    "item": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["game_id", "display_name", "snapshot_id", "path", "result", "reason", "export"],
+      "properties": {
+        "game_id": { "type": "string" },
+        "display_name": { "type": "string" },
+        "snapshot_id": { "type": ["string", "null"], "description": "null: the record has no manual or imported snapshot" },
+        "path": { "type": ["string", "null"], "description": "the archive (written, kept or attempted)" },
+        "result": { "enum": ["exported", "skipped", "failed"] },
+        "reason": { "type": ["string", "null"], "description": "why it was skipped or failed" },
+        "export": { "type": ["object", "null"], "$ref": "#/$defs/export" }
+      }
+    },
+    "export": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "as the output of a single export (export.schema.json)",
+      "required": [
+        "path",
+        "game_id",
+        "display_name",
+        "snapshot_id",
+        "file_count",
+        "total_bytes",
+        "archive_bytes",
+        "includes_tokens",
+        "excluded_sources",
+        "paths",
+        "excluded_reasons"
+      ],
+      "properties": {
+        "path": { "type": "string" },
+        "game_id": { "type": "string" },
+        "display_name": { "type": "string" },
+        "snapshot_id": { "type": "string" },
+        "file_count": { "type": "integer" },
+        "total_bytes": { "type": "integer" },
+        "archive_bytes": { "type": "integer" },
+        "includes_tokens": { "type": "boolean" },
+        "excluded_sources": { "type": "array", "items": { "type": "string" } },
+        "paths": { "enum": ["anonymized", "original"] },
+        "excluded_reasons": { "type": "object" }
+      }
+    }
+  }
+}

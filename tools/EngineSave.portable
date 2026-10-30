@@ -1,0 +1,8 @@
+EngineSave portable marker
+
+While this file sits next to EngineSave.exe, the window keeps its settings and logs in the
+"config" folder here, so the whole folder can be moved or copied to another computer.
+Delete this file to use %APPDATA%\EngineSave instead.
+
+这个文件在 EngineSave.exe 旁边时，图形界面的设置与日志保存在这里的 config 文件夹，
+整个文件夹可以移动或复制到另一台电脑。删除它则改用 %APPDATA%\EngineSave。

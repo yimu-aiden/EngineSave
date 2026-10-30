@@ -1,0 +1,44 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "enginesave/export.schema.json",
+  "title": "enginesave export --json",
+  "description": "Output of `enginesave export ... --json` (0.3.0, D24; paths and excluded_reasons since 0.3.1). Only printed once the archive has been written and verified.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "path",
+    "game_id",
+    "display_name",
+    "snapshot_id",
+    "file_count",
+    "total_bytes",
+    "archive_bytes",
+    "includes_tokens",
+    "excluded_sources",
+    "paths",
+    "excluded_reasons"
+  ],
+  "properties": {
+    "path": { "type": "string", "description": "the verified archive" },
+    "game_id": { "type": "string" },
+    "display_name": { "type": "string" },
+    "snapshot_id": { "type": "string" },
+    "file_count": { "type": "integer", "description": "data files in the archive" },
+    "total_bytes": { "type": "integer", "description": "uncompressed size of the data files" },
+    "archive_bytes": { "type": "integer" },
+    "includes_tokens": { "type": "boolean", "description": "true only with --include-tokens" },
+    "excluded_sources": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "sources of the snapshot that were left out (see excluded_reasons)"
+    },
+    "paths": {
+      "enum": ["anonymized", "original"],
+      "description": "anonymized (default): GAME_ROOT/..., RENPY_SAVES_ROOT/... and (0.10.0) UNITY_LOCALLOW/..., LOCALAPPDATA/..., APPDATA/... (0.11.0: DOCUMENTS/..., SAVED_GAMES/..., VIRTUALSTORE/...) instead of this computer's folders; original: --keep-paths"
+    },
+    "excluded_reasons": {
+      "type": "object",
+      "description": "source id -> private_keys (machine_tokens without --include-tokens) or absolute_path (a folder known only by its absolute path, left out of anonymized exports)"
+    }
+  }
+}

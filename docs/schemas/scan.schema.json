@@ -1,0 +1,241 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "enginesave/scan.schema.json",
+  "title": "enginesave scan --json",
+  "description": "Output of `enginesave scan ... --json` and of `scan --report FILE.json` (format_version 1).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "format_version",
+    "tool_version",
+    "generated_at",
+    "roots",
+    "renpy_saves_root",
+    "games",
+    "unlinked",
+    "skipped",
+    "warnings",
+    "timing"
+  ],
+  "properties": {
+    "format_version": { "const": 1 },
+    "tool_version": { "type": "string" },
+    "generated_at": { "type": "string", "description": "UTC, YYYY-MM-DDTHH:MM:SSZ" },
+    "roots": { "type": "array", "items": { "type": "string" } },
+    "renpy_saves_root": { "type": "string" },
+    "games": { "type": "array", "items": { "$ref": "#/$defs/game" } },
+    "unlinked": { "type": "array", "items": { "$ref": "#/$defs/unlinked" } },
+    "skipped": { "type": "array", "items": { "$ref": "#/$defs/skipped" } },
+    "warnings": { "type": "array", "items": { "type": "string" } },
+    "timing": { "$ref": "#/$defs/timing" }
+  },
+  "$defs": {
+    "timing": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["total_seconds", "roots", "slowest"],
+      "description": "0.6.0: how long the scan took; `slowest` only when it took longer than 60 seconds",
+      "properties": {
+        "total_seconds": { "type": "number" },
+        "roots": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["root", "seconds"],
+            "properties": { "root": { "type": "string" }, "seconds": { "type": "number" } }
+          }
+        },
+        "slowest": {
+          "type": "array",
+          "description": "the folders that took longest on their own (listing and detection), slowest first",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["path", "seconds"],
+            "properties": { "path": { "type": "string" }, "seconds": { "type": "number" } }
+          }
+        }
+      }
+    },
+    "evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["file", "method", "detail", "line"],
+      "properties": {
+        "file": { "type": "string", "description": "relative to the game root; archive members as game/archive.rpa!options.rpy" },
+        "method": { "type": "string" },
+        "detail": { "type": "string" },
+        "line": { "type": ["integer", "null"] }
+      }
+    },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "source_id",
+        "kind",
+        "path",
+        "root_token",
+        "relative_root",
+        "status",
+        "method",
+        "evidence",
+        "exists",
+        "file_count",
+        "total_bytes",
+        "mirror_of",
+        "notes"
+      ],
+      "properties": {
+        "source_id": { "type": "string" },
+        "kind": { "enum": ["local", "global", "extra", "machine_tokens", "registry"], "description": "0.10.0 (D65): registry is a registry key (path HKEY_CURRENT_USER\\...) kept as one .reg file" },
+        "path": { "type": "string" },
+        "root_token": { "enum": ["GAME_ROOT", "RENPY_SAVES_ROOT", "ABSOLUTE", "UNITY_LOCALLOW", "LOCALAPPDATA", "APPDATA", "DOCUMENTS", "SAVED_GAMES", "VIRTUALSTORE"], "description": "0.10.0 (D65): UNITY_LOCALLOW, LOCALAPPDATA and APPDATA for other engines (0.11.0, D69: DOCUMENTS, SAVED_GAMES and VIRTUALSTORE too); relative_root is then a relative path below that folder (GAME_ROOT: '.' is the game folder itself, only with patterns)" },
+        "relative_root": { "type": "string" },
+        "status": { "enum": ["CONFIRMED", "CANDIDATE", "EXPECTED_ABSENT", "USER_CONFIRMED"] },
+        "method": { "type": "string" },
+        "evidence": { "type": "array", "items": { "$ref": "#/$defs/evidence" } },
+        "exists": { "type": "boolean" },
+        "file_count": { "type": "integer" },
+        "total_bytes": { "type": "integer" },
+        "mirror_of": { "type": "array", "items": { "type": "string" } },
+        "notes": { "type": "array", "items": { "type": "string" } },
+        "patterns": { "type": "array", "items": { "type": "string" }, "description": "0.10.0 (D65 2): only the files directly in the folder whose names match these patterns (case-insensitive); empty means the whole folder" },
+        "excludes": { "type": "array", "items": { "type": "string" }, "description": "0.10.0: names directly in the folder that are left out, with everything below them (a log, a cache folder)" }
+      }
+    },
+    "identity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "renpy_save_directory",
+        "config_name",
+        "build_name",
+        "config_version",
+        "exe_basename",
+        "root_dir_name"
+      ],
+      "properties": {
+        "renpy_save_directory": { "type": ["string", "null"] },
+        "config_name": { "type": ["string", "null"] },
+        "build_name": { "type": ["string", "null"] },
+        "config_version": { "type": ["string", "null"] },
+        "exe_basename": { "type": ["string", "null"] },
+        "root_dir_name": { "type": "string" },
+        "engine_key": { "type": ["string", "null"], "description": "0.10.0 (D65 3): other engines -- what an automatic match with a record compares, with the engine" },
+        "title": { "type": ["string", "null"] },
+        "company": { "type": ["string", "null"], "description": "Unity" },
+        "product": { "type": ["string", "null"], "description": "Unity" },
+        "project": { "type": ["string", "null"], "description": "Unreal" }
+      }
+    },
+    "install": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["game_root", "config_version", "engine_version"],
+      "properties": {
+        "game_root": { "type": "string" },
+        "config_version": { "type": ["string", "null"] },
+        "engine_version": { "type": ["string", "null"] }
+      }
+    },
+    "suggestion": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["game_id", "reason"],
+      "properties": {
+        "game_id": { "type": "string" },
+        "reason": {
+          "enum": [
+            "config_name_match",
+            "dir_name_match",
+            "unlinked_save_directory_match",
+            "shared_save_directory"
+          ]
+        }
+      }
+    },
+    "game": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "game_root",
+        "engine",
+        "engine_version",
+        "display_name",
+        "identity",
+        "metadata_state",
+        "status",
+        "sources",
+        "evidence",
+        "warnings",
+        "known_game_id",
+        "link_suggestions",
+        "installs"
+      ],
+      "properties": {
+        "game_root": { "type": "string" },
+        "engine": { "type": "string", "description": "renpy, or a fingerprinted engine such as unity, electron or nwjs" },
+        "engine_version": { "type": ["string", "null"] },
+        "display_name": { "type": "string" },
+        "identity": { "$ref": "#/$defs/identity" },
+        "metadata_state": { "enum": ["resolved", "dynamic", "missing", "conflict"] },
+        "status": {
+          "enum": ["CONFIRMED", "CANDIDATE", "NOT_FOUND", "CONFLICT", "UNSUPPORTED"]
+        },
+        "sources": { "type": "array", "items": { "$ref": "#/$defs/source" } },
+        "evidence": { "type": "array", "items": { "$ref": "#/$defs/evidence" } },
+        "warnings": { "type": "array", "items": { "type": "string" } },
+        "known_game_id": { "type": ["string", "null"] },
+        "link_suggestions": { "type": "array", "items": { "$ref": "#/$defs/suggestion" } },
+        "installs": { "type": "array", "items": { "$ref": "#/$defs/install" } },
+        "shared_global_with": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "0.8.0 (D48): the game folders of other games that use the same global save directory"
+        }
+      }
+    },
+    "unlinked": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "path",
+        "file_count",
+        "total_bytes",
+        "last_modified",
+        "version_hint",
+        "known_game_id"
+      ],
+      "properties": {
+        "name": { "type": "string" },
+        "path": { "type": "string" },
+        "file_count": { "type": "integer" },
+        "total_bytes": { "type": "integer" },
+        "last_modified": { "type": "string", "description": "UTC with milliseconds" },
+        "version_hint": { "type": ["string", "null"] },
+        "known_game_id": { "type": ["string", "null"] }
+      }
+    },
+    "skipped": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "reason"],
+      "properties": {
+        "path": { "type": "string" },
+        "reason": {
+          "enum": [
+            "renpy_sdk",
+            "symlink",
+            "permission_denied",
+            "depth_limit",
+            "backup_repo",
+            "excluded"
+          ]
+        }
+      }
+    }
+  }
+}

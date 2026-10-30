@@ -1,0 +1,117 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "enginesave/backup.schema.json",
+  "title": "enginesave backup --json",
+  "description": "Output of `enginesave backup ... --json` and of `backup --report FILE.json`. `result` is null for --dry-run or when there is nothing to back up.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["dry_run", "plan", "result"],
+  "properties": {
+    "dry_run": { "type": "boolean" },
+    "plan": { "$ref": "#/$defs/plan" },
+    "result": { "type": ["object", "null"], "$ref": "#/$defs/result" }
+  },
+  "$defs": {
+    "planned_source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["source_id", "kind", "path", "status", "file_count", "total_bytes"],
+      "properties": {
+        "source_id": { "type": "string" },
+        "kind": { "enum": ["local", "global", "extra", "machine_tokens", "registry"], "description": "0.10.0 (D65): registry is a registry key kept as one .reg file (Unity's PlayerPrefs)" },
+        "path": { "type": "string" },
+        "status": { "enum": ["CONFIRMED", "CANDIDATE", "EXPECTED_ABSENT", "USER_CONFIRMED"] },
+        "file_count": { "type": "integer" },
+        "total_bytes": { "type": "integer" }
+      }
+    },
+    "planned_game": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "display_name", "version", "game_root", "game_id", "sources"],
+      "properties": {
+        "kind": { "enum": ["game", "unlinked"] },
+        "display_name": { "type": "string" },
+        "version": { "type": ["string", "null"] },
+        "game_root": { "type": ["string", "null"] },
+        "game_id": { "type": ["string", "null"], "description": "null: a new record will be created" },
+        "sources": { "type": "array", "items": { "$ref": "#/$defs/planned_source" } }
+      }
+    },
+    "skipped": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "path", "reason"],
+      "properties": {
+        "name": { "type": "string" },
+        "path": { "type": "string" },
+        "reason": { "type": "string" }
+      }
+    },
+    "plan": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["dest", "repo_state", "games", "skipped"],
+      "properties": {
+        "dest": { "type": "string" },
+        "repo_state": { "enum": ["new", "existing"] },
+        "games": { "type": "array", "items": { "$ref": "#/$defs/planned_game" } },
+        "skipped": { "type": "array", "items": { "$ref": "#/$defs/skipped" } }
+      }
+    },
+    "file_error": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["source_id", "path", "error"],
+      "properties": {
+        "source_id": { "type": "string" },
+        "path": { "type": "string" },
+        "error": { "type": "string" }
+      }
+    },
+    "game_result": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "display_name",
+        "kind",
+        "status",
+        "game_id",
+        "snapshot_id",
+        "file_count",
+        "total_bytes",
+        "errors",
+        "changed_sources",
+        "message",
+        "storage"
+      ],
+      "properties": {
+        "display_name": { "type": "string" },
+        "kind": { "enum": ["game", "unlinked"] },
+        "status": { "enum": ["ok", "partial", "failed"] },
+        "game_id": { "type": ["string", "null"] },
+        "snapshot_id": { "type": ["string", "null"], "description": "null when nothing was committed" },
+        "file_count": { "type": "integer" },
+        "total_bytes": { "type": "integer" },
+        "errors": { "type": "array", "items": { "$ref": "#/$defs/file_error" } },
+        "changed_sources": { "type": "array", "items": { "type": "string" } },
+        "message": { "type": "string" },
+        "storage": {
+          "type": ["string", "null"],
+          "enum": ["hardlink", "copy", "mixed", null],
+          "description": "manifest storage of the committed snapshot (0.2.0, D18); null when nothing was committed"
+        }
+      }
+    },
+    "result": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["results", "skipped"],
+      "properties": {
+        "results": { "type": "array", "items": { "$ref": "#/$defs/game_result" } },
+        "skipped": { "type": "array", "items": { "$ref": "#/$defs/skipped" } },
+        "cancelled": { "const": true, "description": "0.9.0 (D58): only when it was stopped; results are the games done, the one being copied got no snapshot" }
+      }
+    }
+  }
+}

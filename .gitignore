@@ -1,0 +1,14 @@
+# Real game samples and local smoke-test output: never commit
+Test/
+.local/
+
+# Python environment and build output
+.venv/
+.venv-build/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+dist/
+build/
+*.egg-info/

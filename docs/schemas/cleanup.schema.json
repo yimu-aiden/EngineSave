@@ -1,0 +1,189 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "enginesave/cleanup.schema.json",
+  "title": "enginesave cleanup --json",
+  "description": "Output of `enginesave cleanup ... --json` (0.4.0, D26). `result` is null for --dry-run.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["dry_run", "plan", "result"],
+  "properties": {
+    "dry_run": { "type": "boolean" },
+    "plan": { "$ref": "#/$defs/plan" },
+    "result": { "type": ["object", "null"], "$ref": "#/$defs/result" },
+    "full_bin": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mode", "purged", "results", "waiting"],
+      "description": "0.7.0 (D41): only when the recycle bin was full - what --on-full-bin did",
+      "properties": {
+        "mode": { "enum": ["ask", "purge-ours", "permanent", "stop"] },
+        "purged": {
+          "type": "array",
+          "description": "folders EngineSave had put in the recycle bin earlier, deleted from it to make room",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["path", "bytes", "recycled_at", "game_id", "display_name", "kind", "result", "error"],
+            "properties": {
+              "path": { "type": "string" },
+              "bytes": { "type": "integer" },
+              "recycled_at": { "type": "string" },
+              "game_id": { "type": "string" },
+              "display_name": { "type": "string" },
+              "kind": { "type": "string" },
+              "result": { "enum": ["purged", "failed", "not_found"] },
+              "error": { "type": ["string", "null"] }
+            }
+          }
+        },
+        "results": { "type": "array", "items": { "$ref": "#/$defs/result" } },
+        "waiting": { "type": "array", "items": { "type": "string" }, "description": "still left for later" },
+        "cancelled": { "const": true, "description": "0.9.0 (D58): only when Ctrl+C stopped it; the folders not reached are still in waiting" }
+      }
+    }
+  },
+  "$defs": {
+    "recycle_bin": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["drive", "capacity", "used", "room", "disabled"],
+      "description": "0.6.0 (D35): a drive's recycle bin; null where it cannot be read",
+      "properties": {
+        "drive": { "type": "string" },
+        "capacity": { "type": ["integer", "null"], "description": "bytes (MaxCapacity)" },
+        "used": { "type": ["integer", "null"], "description": "bytes in it now" },
+        "room": { "type": ["integer", "null"], "description": "capacity - used - 5 %" },
+        "disabled": { "type": "boolean", "description": "NukeOnDelete: Windows deletes at once" }
+      }
+    },
+    "target": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind", "path", "files", "bytes", "ok", "reasons", "notes", "recycle_refused", "already_cleaned", "gone",
+        "needs_room"
+      ],
+      "properties": {
+        "kind": { "enum": ["game_root", "global", "unlinked"] },
+        "path": { "type": "string" },
+        "files": { "type": "integer" },
+        "bytes": { "type": "integer" },
+        "ok": { "type": "boolean", "description": "passed every check" },
+        "reasons": { "type": "array", "items": { "type": "string" }, "description": "why it is refused" },
+        "notes": { "type": "array", "items": { "type": "string" } },
+        "recycle_refused": {
+          "type": "boolean",
+          "description": "0.6.0: the recycle bin cannot take it (no bin, not a fixed drive, turned off or too small)"
+        },
+        "already_cleaned": {
+          "type": ["object", "null"],
+          "additionalProperties": false,
+          "required": ["method", "at"],
+          "description": "0.7.0 (D41): the folder is not there and a cleanup of this record removed it; counted neither as passed nor as refused",
+          "properties": {
+            "method": { "enum": ["recycle", "permanent"] },
+            "at": { "type": "string" },
+            "purged_at": { "type": "string", "description": "when EngineSave purged it from the recycle bin to make room" }
+          }
+        },
+        "gone": {
+          "type": "boolean",
+          "description": "0.7.0 (D41): the folder is not there and no cleanup is recorded; counted neither as passed nor as refused"
+        },
+        "needs_room": {
+          "type": "boolean",
+          "description": "0.7.0 (D41): bigger than the room left in the recycle bin; not refused, room is made first when it is cleaned up (--on-full-bin)"
+        }
+      }
+    },
+    "plan": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "repository",
+        "game_id",
+        "display_name",
+        "kind",
+        "snapshot_id",
+        "snapshot_reason",
+        "verified_files",
+        "method",
+        "recycle_limit",
+        "recycle_bins",
+        "ok",
+        "targets"
+      ],
+      "properties": {
+        "repository": { "type": "string" },
+        "game_id": { "type": "string" },
+        "display_name": { "type": "string" },
+        "kind": { "enum": ["game", "unlinked"] },
+        "snapshot_id": { "type": ["string", "null"] },
+        "snapshot_reason": { "type": ["string", "null"] },
+        "verified_files": { "type": "integer" },
+        "method": { "enum": ["recycle", "permanent"] },
+        "recycle_limit": {
+          "type": ["integer", "null"],
+          "description": "--recycle-limit; null (0.6.0): the room in each drive's recycle bin"
+        },
+        "recycle_bins": { "type": "array", "items": { "$ref": "#/$defs/recycle_bin" } },
+        "ok": { "type": "boolean", "description": "every target passed" },
+        "targets": { "type": "array", "items": { "$ref": "#/$defs/target" } }
+      }
+    },
+    "outcome": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "path", "bytes", "result", "error", "leftovers"],
+      "properties": {
+        "kind": { "enum": ["game_root", "global", "unlinked"] },
+        "path": { "type": "string" },
+        "bytes": { "type": "integer" },
+        "result": {
+          "enum": ["recycled", "deleted", "failed", "gone", "skipped_full_bin"],
+          "description": "0.7.0 (D41): gone - the folder was not there any more at the check right before removal; skipped_full_bin - left for later, its drive's recycle bin has no room left"
+        },
+        "error": { "type": ["string", "null"] },
+        "leftovers": { "type": "array", "items": { "type": "string" } },
+        "at": { "type": "string", "description": "0.7.0: when this folder was removed" }
+      }
+    },
+    "result": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["at", "method", "freed_bytes", "targets", "recycle_bins", "skipped_full_bin", "full_bins"],
+      "properties": {
+        "cancelled": { "const": true, "description": "0.9.0 (D58): only when it was stopped between folders; targets are the folders done" },
+        "at": { "type": "string" },
+        "method": { "enum": ["recycle", "permanent"] },
+        "freed_bytes": { "type": "integer" },
+        "targets": { "type": "array", "items": { "$ref": "#/$defs/outcome" } },
+        "recycle_bins": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/recycle_bin" },
+          "description": "0.6.0: the bins read again after recycling"
+        },
+        "skipped_full_bin": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "0.7.0 (D41): folders left for later because their drive's recycle bin is full"
+        },
+        "full_bins": {
+          "type": "array",
+          "description": "0.7.0 (D41): per drive with folders left for later, in bytes",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["drive", "room", "needed", "missing"],
+            "properties": {
+              "drive": { "type": "string" },
+              "room": { "type": "integer" },
+              "needed": { "type": "integer" },
+              "missing": { "type": "integer" }
+            }
+          }
+        }
+      }
+    }
+  }
+}

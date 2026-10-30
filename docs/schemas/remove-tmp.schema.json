@@ -1,0 +1,54 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "enginesave/remove-tmp.schema.json",
+  "title": "enginesave remove --tmp --json",
+  "description": "0.9.0 (D55): output of `enginesave remove --repo DIR --tmp --json`. Without --yes (or with --dry-run) nothing is deleted, dry_run is true and result is null. Only snapshots/.tmp-* folders and entries of objects/.tmp are ever deleted; one changed in the last 10 minutes is kept. With --yes the object store is collected afterwards (also when there was nothing to delete).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["dry_run", "repository", "tmp", "result"],
+  "properties": {
+    "dry_run": { "type": "boolean" },
+    "repository": { "type": "string" },
+    "tmp": { "type": "array", "items": { "$ref": "#/$defs/folder" } },
+    "result": { "type": ["object", "null"], "$ref": "#/$defs/result" }
+  },
+  "$defs": {
+    "folder": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "bytes", "files", "modified", "recent"],
+      "properties": {
+        "path": { "type": "string" },
+        "bytes": { "type": "integer" },
+        "files": { "type": "integer" },
+        "modified": { "type": "string", "description": "newest modification time inside, ISO-8601 UTC" },
+        "recent": { "type": "boolean", "description": "changed in the last 10 minutes (a snapshot's temporary folder also while anything in objects/.tmp did, 0.10.0): may be in use, kept" },
+        "held_by_store": { "const": true, "description": "0.10.0 (D59): only when it is old itself and kept because a file in objects/.tmp changed in the last 10 minutes" }
+      }
+    },
+    "result": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "removed",
+        "freed_bytes",
+        "recent",
+        "leftovers",
+        "objects_removed",
+        "objects_kept_linked",
+        "gc_skipped"
+      ],
+      "properties": {
+        "removed": { "type": "array", "items": { "type": "string" } },
+        "freed_bytes": { "type": "integer", "description": "the folders' files and the objects collected" },
+        "recent": { "type": "array", "items": { "type": "string" } },
+        "leftovers": { "type": "array", "items": { "type": "string" }, "description": "could not be deleted" },
+        "objects_removed": { "type": "integer" },
+        "objects_kept_linked": { "type": "integer" },
+        "gc_skipped": { "type": ["string", "null"], "description": "why unused objects were not removed" },
+        "cancelled": { "const": true, "description": "0.9.0 (D58): only when it was stopped" },
+        "store_busy": { "const": true, "description": "0.10.0 (D59): only when temporary snapshot folders were kept because a file in objects/.tmp changed in the last 10 minutes" }
+      }
+    }
+  }
+}

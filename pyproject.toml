@@ -1,0 +1,46 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "enginesave"
+dynamic = ["version"]
+description = "Game save backup by engine: find, back up, verify, restore, and clean up game installs (Windows)"
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+requires-python = ">=3.12"
+dependencies = []
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "ruff>=0.6"]
+# Only for tools/build_portable.ps1 (in .venv-build); EngineSave itself needs only the
+# standard library.
+build = ["pyinstaller>=6.11"]
+
+[project.scripts]
+enginesave = "enginesave.cli:main"
+
+[project.gui-scripts]
+enginesave-gui = "enginesave.gui.app:main"
+
+[tool.setuptools.dynamic]
+version = { attr = "enginesave.__version__" }
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# Capture at the sys level: fd-level capture swaps the process's standard handles between test
+# phases while Tcl keeps channels on the old ones, and the GUI tests then intermittently fail
+# to start Tk ("Can't find a usable tk.tcl").
+addopts = ["--capture=sys"]

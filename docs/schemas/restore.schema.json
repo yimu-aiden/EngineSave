@@ -1,0 +1,106 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "enginesave/restore.schema.json",
+  "title": "enginesave restore --json",
+  "description": "Output of `enginesave restore ... --json`. `result` is null for --dry-run.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["dry_run", "plan", "result"],
+  "properties": {
+    "dry_run": { "type": "boolean" },
+    "plan": { "$ref": "#/$defs/plan" },
+    "result": { "type": ["object", "null"], "$ref": "#/$defs/result" }
+  },
+  "$defs": {
+    "target": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "source_id",
+        "kind",
+        "target_dir",
+        "resolved_by",
+        "files",
+        "overwrites",
+        "extra_in_target",
+        "creates_dir"
+      ],
+      "properties": {
+        "source_id": { "type": "string" },
+        "kind": { "enum": ["local", "global", "extra", "machine_tokens", "registry"], "description": "0.10.0 (D65): registry is a registry key kept as one .reg file, restored into the game folder for the user to import" },
+        "target_dir": { "type": "string" },
+        "resolved_by": {
+          "type": "string",
+          "description": "--game-root, recorded install, install found by the scan, original install, override, env:RENPY_PATH_TO_SAVES, portable:RenPy Data, path_to_saves:APPDATA, path_to_saves:HOME, original absolute path, or (0.10.0, another engine's folder in the user profile) env:ENGINESAVE_ROOT_<TOKEN>, default:<TOKEN>, default:USERPROFILE"
+        },
+        "files": { "type": "integer" },
+        "overwrites": { "type": "integer" },
+        "extra_in_target": { "type": "integer", "description": "kept: restore never deletes" },
+        "creates_dir": { "type": "boolean" }
+      }
+    },
+    "plan": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "repository",
+        "game_id",
+        "display_name",
+        "snapshot_id",
+        "snapshot_reason",
+        "snapshot_status",
+        "game_root",
+        "notes",
+        "targets"
+      ],
+      "properties": {
+        "repository": { "type": "string" },
+        "game_id": { "type": "string" },
+        "display_name": { "type": "string" },
+        "snapshot_id": { "type": "string" },
+        "snapshot_reason": { "enum": ["manual", "pre_restore", "import"] },
+        "snapshot_status": { "enum": ["complete", "partial"] },
+        "game_root": {
+          "type": ["string", "null"],
+          "description": "0.6.0: the install local saves go into (null when no local source is restored into one install)"
+        },
+        "notes": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "0.6.0: e.g. the folder around the game was replaced by the game inside, or the game version differs"
+        },
+        "shared_with": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "0.8.0 (D48): the other games, name (version), whose saves share the global save directory restored into"
+        },
+        "targets": { "type": "array", "items": { "$ref": "#/$defs/target" } }
+      }
+    },
+    "failure": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["source_id", "path", "error"],
+      "properties": {
+        "source_id": { "type": "string" },
+        "path": { "type": "string" },
+        "error": { "type": "string" }
+      }
+    },
+    "result": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["written", "failures", "safety_snapshot", "note", "registered_install"],
+      "properties": {
+        "written": { "type": "integer" },
+        "failures": { "type": "array", "items": { "$ref": "#/$defs/failure" } },
+        "safety_snapshot": { "type": ["string", "null"], "description": "pre_restore snapshot id" },
+        "note": { "type": ["string", "null"] },
+        "registered_install": {
+          "type": ["string", "null"],
+          "description": "0.7.0 (D43): the game folder the local saves went into, now recorded as an install of the record"
+        }
+      }
+    }
+  }
+}

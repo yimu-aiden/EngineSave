@@ -1,0 +1,12 @@
+# The portable build's tools, exactly (1.0.0, D72 R18). tools/build_portable.ps1 installs
+# with "-c tools/build-constraints.txt" into .venv-build and checks the interpreter first:
+#   python 3.14.2, 64-bit (AMD64) -- the zip is named win64
+# EngineSave itself needs only the standard library; these are for PyInstaller alone.
+# Change a version here on purpose, build, run tools/portable_checks.py, then commit.
+altgraph==0.17.5
+packaging==26.3
+pefile==2024.8.26
+pyinstaller==6.22.3
+pyinstaller-hooks-contrib==2026.9
+pywin32-ctypes==0.2.3
+setuptools==84.2.1

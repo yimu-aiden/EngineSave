@@ -1,0 +1,105 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "enginesave/import-batch.schema.json",
+  "title": "enginesave import --from DIR --json",
+  "description": "Output of `enginesave import --from <folder> --yes --json` (0.4.0, D27): every *.zip directly in the folder, by name; each is planned again right before it is imported. Since 0.5.0 (D31) an archive the repository already holds as an import (also a second copy in the same folder) is skipped with reason \"already imported\" unless --reimport; skipped items do not change the exit code, which is 1 when any item failed.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["kind", "location", "imported", "skipped", "failed", "items"],
+  "properties": {
+    "kind": { "const": "import" },
+    "location": { "type": "string", "description": "the folder the archives came from" },
+    "imported": { "type": "integer" },
+    "skipped": { "type": "integer" },
+    "failed": { "type": "integer" },
+    "items": { "type": "array", "items": { "$ref": "#/$defs/item" } },
+    "cancelled": { "const": true, "description": "0.9.0 (D58): only when it was stopped between archives; items are the archives done" }
+  },
+  "$defs": {
+    "item": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["archive", "result", "reason", "error", "plan", "import"],
+      "properties": {
+        "archive": { "type": "string" },
+        "result": { "enum": ["imported", "skipped", "failed"] },
+        "reason": { "enum": ["already imported", null], "description": "why it was skipped" },
+        "error": { "type": ["string", "null"], "description": "why nothing of this archive was imported" },
+        "plan": { "type": ["object", "null"], "$ref": "#/$defs/plan" },
+        "import": { "type": ["object", "null"], "$ref": "#/$defs/result" }
+      }
+    },
+    "plan": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "as in import.schema.json",
+      "required": [
+        "repository",
+        "archive",
+        "display_name",
+        "game_id",
+        "matched_by",
+        "source_snapshot_id",
+        "source_status",
+        "exported_at",
+        "file_count",
+        "total_bytes",
+        "includes_tokens",
+        "ignored_members",
+        "already_imported",
+        "duplicate_of"
+      ],
+      "properties": {
+        "repository": { "type": "string" },
+        "archive": { "type": "string" },
+        "display_name": { "type": "string" },
+        "game_id": { "type": "string" },
+        "matched_by": { "enum": ["game_id", "identity", null] },
+        "source_snapshot_id": { "type": "string" },
+        "source_status": { "enum": ["complete", "partial"] },
+        "exported_at": { "type": ["string", "null"] },
+        "file_count": { "type": "integer" },
+        "total_bytes": { "type": "integer" },
+        "includes_tokens": { "type": "boolean" },
+        "ignored_members": { "type": "integer" },
+        "already_imported": { "type": ["object", "null"], "$ref": "#/$defs/earlier" },
+        "duplicate_of": {
+          "type": ["string", "null"],
+          "description": "0.6.0: in the folder preview, the earlier archive with the same exported snapshot (skipped too); null in import results"
+        }
+      }
+    },
+    "earlier": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["game_id", "snapshot_id"],
+      "properties": {
+        "game_id": { "type": "string" },
+        "snapshot_id": { "type": "string" }
+      }
+    },
+    "result": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "as in import.schema.json",
+      "required": [
+        "game_id",
+        "display_name",
+        "snapshot_id",
+        "created_record",
+        "file_count",
+        "total_bytes",
+        "storage"
+      ],
+      "properties": {
+        "game_id": { "type": "string" },
+        "display_name": { "type": "string" },
+        "snapshot_id": { "type": "string" },
+        "created_record": { "type": "boolean" },
+        "file_count": { "type": "integer" },
+        "total_bytes": { "type": "integer" },
+        "storage": { "enum": ["hardlink", "copy", "mixed"] }
+      }
+    }
+  }
+}

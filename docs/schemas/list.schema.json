@@ -1,0 +1,56 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "enginesave/list.schema.json",
+  "title": "enginesave list --json",
+  "description": "Output of `enginesave list --repo DIR --json`. cleaned_at appears only after a cleanup (0.4.0), install_present since 0.7.0, orphan_record_dirs since 0.8.0, stats since 0.9.0 (D56).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["repository", "games", "stale_tmp_dirs", "orphan_record_dirs", "stats"],
+  "properties": {
+    "repository": { "type": "string" },
+    "games": { "type": "array", "items": { "$ref": "#/$defs/record" } },
+    "stale_tmp_dirs": { "type": "array", "items": { "type": "string" } },
+    "orphan_record_dirs": { "type": "array", "items": { "type": "string" } },
+    "stats": { "$ref": "#/$defs/stats" }
+  },
+  "$defs": {
+    "record": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "game_id",
+        "kind",
+        "display_name",
+        "engine",
+        "renpy_save_directory",
+        "snapshot_count",
+        "latest_snapshot",
+        "install_present"
+      ],
+      "properties": {
+        "game_id": { "type": "string" },
+        "kind": { "enum": ["game", "unlinked"] },
+        "display_name": { "type": ["string", "null"] },
+        "engine": { "type": ["string", "null"] },
+        "renpy_save_directory": { "type": ["string", "null"] },
+        "snapshot_count": { "type": "integer" },
+        "latest_snapshot": { "type": ["string", "null"] },
+        "cleaned_at": { "type": "string" },
+        "install_present": { "type": "boolean" }
+      }
+    },
+    "stats": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["records", "snapshots", "stored_bytes", "logical_bytes", "last_backup", "last_mirror"],
+      "properties": {
+        "records": { "type": "integer" },
+        "snapshots": { "type": "integer", "description": "every snapshot read for the byte counts (0.10.0: record folders the catalog does not name too; unreadable manifests counted)" },
+        "stored_bytes": { "type": "integer", "description": "objects, plain copies, manifests and record files" },
+        "logical_bytes": { "type": "integer", "description": "every snapshot's files as if each were stored on its own" },
+        "last_backup": { "type": ["string", "null"], "description": "the newest manual or imported snapshot's time (0.10.0; before: the newest of any kind), ISO-8601 UTC" },
+        "last_mirror": { "type": ["string", "null"], "description": "when this repository was last mirrored on this computer (mirrors.json beside gui.json)" }
+      }
+    }
+  }
+}

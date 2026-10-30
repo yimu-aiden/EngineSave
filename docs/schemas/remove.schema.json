@@ -1,0 +1,87 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "enginesave/remove.schema.json",
+  "title": "enginesave remove --json",
+  "description": "0.8.0 (D49): output of `enginesave remove ... --json`. Without --yes (or with --dry-run) nothing is deleted, dry_run is true and result is null.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["dry_run", "plan", "result"],
+  "properties": {
+    "dry_run": { "type": "boolean" },
+    "plan": { "$ref": "#/$defs/plan" },
+    "result": { "type": ["object", "null"], "$ref": "#/$defs/result" }
+  },
+  "$defs": {
+    "item": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "game_id",
+        "display_name",
+        "kind",
+        "whole_record",
+        "snapshot_ids",
+        "snapshot_count",
+        "files",
+        "bytes",
+        "install_present"
+      ],
+      "properties": {
+        "game_id": { "type": "string" },
+        "display_name": { "type": "string" },
+        "kind": { "enum": ["game", "unlinked"] },
+        "whole_record": { "type": "boolean", "description": "every snapshot goes: the record is deleted" },
+        "snapshot_ids": { "type": "array", "items": { "type": "string" } },
+        "snapshot_count": { "type": "integer", "description": "all snapshots of the record" },
+        "files": { "type": "integer" },
+        "bytes": { "type": "integer" },
+        "install_present": { "type": "boolean", "description": "one of its game folders is on disk now" }
+      }
+    },
+    "plan": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "repository",
+        "items",
+        "records",
+        "snapshots",
+        "freed_bytes",
+        "gc_blocked",
+        "games_not_installed"
+      ],
+      "properties": {
+        "repository": { "type": "string" },
+        "items": { "type": "array", "items": { "$ref": "#/$defs/item" } },
+        "records": { "type": "integer" },
+        "snapshots": { "type": "integer" },
+        "freed_bytes": { "type": "integer", "description": "about: objects only these snapshots use, plain copies, manifests" },
+        "gc_blocked": { "type": ["string", "null"], "description": "why unused objects will not be removed" },
+        "games_not_installed": { "type": "integer" }
+      }
+    },
+    "result": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "records",
+        "snapshots",
+        "freed_bytes",
+        "objects_removed",
+        "objects_kept_linked",
+        "gc_skipped",
+        "leftovers"
+      ],
+      "properties": {
+        "cancelled": { "const": true, "description": "0.9.0 (D58): only when it was stopped between snapshots; the object store was not collected" },
+        "records": { "type": "integer" },
+        "snapshots": { "type": "integer" },
+        "freed_bytes": { "type": "integer" },
+        "objects_removed": { "type": "integer" },
+        "objects_kept_linked": { "type": "integer" },
+        "gc_skipped": { "type": ["string", "null"] },
+        "leftovers": { "type": "array", "items": { "type": "string" } }
+      }
+    }
+  }
+}
