@@ -35,7 +35,17 @@
         "version": { "type": ["string", "null"] },
         "game_root": { "type": ["string", "null"] },
         "game_id": { "type": ["string", "null"], "description": "null: a new record will be created" },
-        "sources": { "type": "array", "items": { "$ref": "#/$defs/planned_source" } }
+        "sources": { "type": "array", "items": { "$ref": "#/$defs/planned_source" } },
+        "from_install": { "type": ["object", "null"], "$ref": "#/$defs/from_install", "description": "1.2.0 (D73 14): the install the snapshot comes from (--game-root, the game's only install, or the one install all its local saves are in); null when several installs take part, or for an orphaned save folder" }
+      }
+    },
+    "from_install": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["game_root", "game_version"],
+      "properties": {
+        "game_root": { "type": "string" },
+        "game_version": { "type": ["string", "null"], "description": "as the scan read it (D73 7)" }
       }
     },
     "skipped": {
@@ -88,7 +98,7 @@
       "properties": {
         "display_name": { "type": "string" },
         "kind": { "enum": ["game", "unlinked"] },
-        "status": { "enum": ["ok", "partial", "failed"] },
+        "status": { "enum": ["ok", "partial", "failed", "unchanged"], "description": "1.2.0 (D73 2): unchanged with --skip-unchanged, when the saves are exactly the record's latest snapshot: no snapshot is written (snapshot_id null, message names the snapshot), and it counts as a success" },
         "game_id": { "type": ["string", "null"] },
         "snapshot_id": { "type": ["string", "null"], "description": "null when nothing was committed" },
         "file_count": { "type": "integer" },
@@ -110,7 +120,45 @@
       "properties": {
         "results": { "type": "array", "items": { "$ref": "#/$defs/game_result" } },
         "skipped": { "type": "array", "items": { "$ref": "#/$defs/skipped" } },
-        "cancelled": { "const": true, "description": "0.9.0 (D58): only when it was stopped; results are the games done, the one being copied got no snapshot" }
+        "cancelled": { "const": true, "description": "0.9.0 (D58): only when it was stopped; results are the games done, the one being copied got no snapshot" },
+        "pruned": { "$ref": "#/$defs/pruned", "description": "1.2.0 (D73 3): only with --keep-auto" },
+        "mirror": { "$ref": "#/$defs/mirror", "description": "1.2.0 (D73 16): only with --mirror or --auto-mirror; its failure never changes the exit code" }
+      }
+    },
+    "pruned": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["keep", "removed", "freed_bytes", "leftovers", "gc_skipped"],
+      "properties": {
+        "keep": { "type": "integer" },
+        "removed": {
+          "type": "array",
+          "description": "the auto snapshots removed, per record (manual, import and pre_restore snapshots are never removed by --keep-auto)",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["game_id", "snapshot_ids"],
+            "properties": {
+              "game_id": { "type": "string" },
+              "snapshot_ids": { "type": "array", "items": { "type": "string" } }
+            }
+          }
+        },
+        "freed_bytes": { "type": "integer" },
+        "leftovers": { "type": "array", "items": { "type": "string" } },
+        "gc_skipped": { "type": ["string", "null"] },
+        "cancelled": { "const": true }
+      }
+    },
+    "mirror": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["folder", "status", "finished_at", "message"],
+      "properties": {
+        "folder": { "type": ["string", "null"], "description": "the folder of this library's last successful mirror on this computer (mirrors.json); null when there is none" },
+        "status": { "enum": ["ok", "skipped", "failed"], "description": "skipped: not wanted now (the setting is off, never mirrored before, nothing new was backed up); failed: wanted but not done (the folder is not there, the mirror is busy, a copy or the verification failed, stopped)" },
+        "finished_at": { "type": ["string", "null"], "description": "ISO-8601 UTC, when status is ok" },
+        "message": { "type": "string" }
       }
     }
   }

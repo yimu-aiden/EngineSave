@@ -128,10 +128,12 @@ class RestoreDialog(Dialog):
 
     def _label(self, snapshot_id: str) -> str:
         summary = self.repo.snapshot_summary(self.game_id, snapshot_id)
-        return (
-            f"{snapshot_id}   {state.snapshot_time(snapshot_id)}   {summary.get('reason')}   "
-            f"{summary.get('status')}"
+        label = (
+            f"{snapshot_id}   {state.snapshot_time(snapshot_id)}   "
+            f"{state.reason_text(summary.get('reason'))}   {summary.get('status')}"
         )
+        source = state.from_install_text(summary)  # D73 14
+        return f"{label}   {source}" if source else label
 
     @property
     def snapshot_id(self) -> str:
@@ -304,6 +306,7 @@ class RestoreDialog(Dialog):
             job,
             lambda result: self.restored(result, plan),
             status=_("正在恢复 {display_name}…", display_name=plan.display_name),
+            lock=self.repo.root,  # D73 4
         )
 
     def restored(self, result: RestoreResult, plan: RestorePlan | None = None) -> None:

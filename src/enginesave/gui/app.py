@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import contextlib
 import ctypes
+import dataclasses
 import logging
 import os
 import sys
@@ -113,6 +114,27 @@ def apply_icon(root: tk.Tk) -> bool:
     return True
 
 
+BUSY_TEXT = "另一个程序正在写这个备份库，稍后再试。"
+
+
+def locked_job(
+    job: Callable[[Callable[[Any], None]], Any], root: Path, name: str, new_library: bool = False
+) -> Callable[[Callable[[Any], None]], Any]:
+    """``job`` holding the write lock of the library at ``root`` (1.2.0, D73 4); while another
+    program holds it, the job fails at once with :data:`BUSY_TEXT` and who holds it."""
+    from enginesave.lock import LibraryBusy, describe_holder, library_lock
+
+    def run(progress: Callable[[Any], None]) -> Any:
+        try:
+            with library_lock(root, f"EngineSave window: {name}", create=new_library):
+                return job(progress)
+        except LibraryBusy as exc:
+            text = _(BUSY_TEXT) + "\n" + _("（{holder}）", holder=describe_holder(exc.holder))
+            raise LibraryBusy(exc.root, exc.holder, message=text) from None
+
+    return run
+
+
 def set_enabled(widget: Any, enabled: bool) -> None:
     if isinstance(widget, ttk.Widget):
         widget.state(["!disabled"] if enabled else ["disabled"])
@@ -130,6 +152,8 @@ class App(ScanAndBackup):
         settings_file: Path | None = None,
         logs: Path | None = None,
         env: Mapping[str, str] | None = None,
+        library: Path | None = None,
+        game: str | None = None,
     ) -> None:
 
         self.root = root
@@ -139,6 +163,13 @@ class App(ScanAndBackup):
         self.cache_file = self.settings_file.parent / "scan-cache.json"
         set_language(i18n.default_language())  # what a damaged gui.json is said in
         self.settings, settings_note = load_settings(self.settings_file)
+        # 1.2.0 (D73 10): --library DIR opens that library for this session only:
+        # (the library of the settings, the one given)
+        self.session_library: tuple[str, str] | None = None
+        if library is not None:
+            given = os.path.abspath(library)
+            self.session_library = (self.settings.repo_path, given)
+            self.settings.repo_path = given
         set_language(i18n.resolve(self.settings.language))  # D68 2: auto, zh or en
         self.panel_handler, self.file_handler = setup_logging(logs or log_dir(self.env))
         self.log_file = Path(self.file_handler.baseFilename)
@@ -188,7 +219,10 @@ class App(ScanAndBackup):
         self.refresh_guidance()
         self._poll()
         if self.settings.repo_path:  # read in the background once the window is up; no scan
-            root.after_idle(self.library.reload)
+            if game:  # D73 10: --game ID, selected on the library page once it is read
+                root.after_idle(lambda: self.library.reload(then=lambda: self.open_record(game)))
+            else:
+                root.after_idle(self.library.reload)
 
     # -------------------------------------------------------------------------------- layout
 
@@ -383,12 +417,19 @@ class App(ScanAndBackup):
         status: str | None = None,
         determinate: bool = False,
         cancellable: bool = False,
+        lock: Path | None = None,
+        new_library: bool = False,
     ) -> bool:
         """Run ``job`` on the worker thread; ``widgets`` are disabled until it ends. A
         ``cancellable`` job checks :meth:`stop_requested` at its safe points (D58): 「取消」
-        shows beside the progress bar while it runs."""
+        shows beside the progress bar while it runs. A job that writes into a library names it
+        as ``lock`` (1.2.0, D73 4): the job holds the library's write lock while it runs, and
+        fails at once, saying so, while another program holds it (``new_library``: the folder
+        may not be there yet)."""
         if self.closing:  # D58: the window waits for the running job to stop, nothing more
             return False
+        if lock is not None:
+            job = locked_job(job, lock, name, new_library)
         if self.runner.busy:
             messagebox.showinfo(
                 TITLE, _("“{name}”还在进行，请稍候。", name=self.runner.name), parent=self.root
@@ -527,10 +568,29 @@ class App(ScanAndBackup):
         )
 
     def save_settings(self) -> None:
+        settings = self.settings
+        if self.session_library is not None:  # D73 10: --library is for this session only
+            saved, given = self.session_library
+            if settings.repo_path and path_key(settings.repo_path) == path_key(given):
+                settings = dataclasses.replace(settings, repo_path=saved)
         try:
-            save_settings(self.settings, self.settings_file)
+            save_settings(settings, self.settings_file)
         except OSError as exc:
             self.show_error(exc, title=_("设置无法保存"))
+
+    def open_record(self, game: str) -> None:
+        """1.2.0 (D73 10): show the library page with record ``game`` (an id, a unique id
+        prefix, a save directory or a name) selected, once the library has been read."""
+        repo = self.library.repo
+        self.notebook.select(self.library)
+        if repo is None:
+            return
+        try:
+            game_id = repo.resolve_game(repo.load_catalog(), game)["game_id"]
+        except EngineSaveError as exc:
+            log.warning(_("没有打开指定的记录：%s"), exc)
+            return
+        self.library.show_rows(select=game_id)
 
     def open_folder(self, path: Path | str, *, parent: Any = None) -> bool:
         """Open a folder in Explorer (D36); a folder that is not there is a notice, not an
@@ -799,11 +859,23 @@ def self_test(app: App, timeout: float = 60.0) -> int:
     return 0
 
 
+def option_value(args: list[str], name: str) -> str | None:
+    """The value of ``name VALUE`` or ``name=VALUE`` among the arguments, else ``None``."""
+    for index, arg in enumerate(args):
+        if arg == name and index + 1 < len(args):
+            return args[index + 1]
+        if arg.startswith(f"{name}="):
+            return arg.split("=", 1)[1]
+    return None
+
+
 def main(argv: list[str] | None = None) -> int:
     """``enginesave-gui`` / ``EngineSave.exe``: open the window; exit code 3 when Tk is unavailable.
 
     ``--self-test`` builds the window without ever showing it, closes it again (which writes
     the settings file) and exits with 0, so a portable build can be checked without a window.
+    1.2.0 (D73 10): ``--library DIR`` opens that library for this session (the settings keep
+    theirs), ``--game ID`` then shows the library page with that record selected.
     Arguments are read by hand: a windowed program has no console for argparse's messages.
     """
     args = sys.argv[1:] if argv is None else argv
@@ -826,8 +898,9 @@ def main(argv: list[str] | None = None) -> int:
     apply_theme(root)
     apply_icon(root)
     carried = carry_over_settings()  # renamed from SaveTrail: its settings, once
+    library, game = option_value(args, "--library"), option_value(args, "--game")  # D73 10
     try:
-        app = App(root)
+        app = App(root, library=Path(library) if library else None, game=game)
     except Exception as exc:  # noqa: BLE001 - the window could not be built at all
         logging.getLogger("enginesave.gui").error(_("图形界面启动失败"), exc_info=exc)
         report(_("图形界面启动失败：{name__}: {exc}", name__=type(exc).__name__, exc=exc))

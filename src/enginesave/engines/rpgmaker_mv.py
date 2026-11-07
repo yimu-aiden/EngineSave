@@ -100,6 +100,12 @@ class RpgMakerMvDetector(common.EngineDetector):
                 warnings.append(
                     f"saves in both {save.replace('/', chr(92))} and save; both are backed up"
                 )
+        package = listing.file("package.json")  # NW.js's; a version only when the author set one
+        version = (
+            common.package_version(common.read_json(directory / package), package)
+            if package
+            else None
+        )
         return common.rule_game(
             directory,
             found.engine,
@@ -109,4 +115,5 @@ class RpgMakerMvDetector(common.EngineDetector):
             evidence=evidence,
             warnings=warnings,
             engine_version=core_version(core),
+            game_version=version,  # 1.2.0 (D73 7)
         )

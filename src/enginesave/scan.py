@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import os
 import time
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -23,6 +23,7 @@ from enginesave.fsutil import (
     walk_files,
 )
 from enginesave.identity import annotate_known_games
+from enginesave.installs import complete_installs
 from enginesave.models import (
     FORMAT_VERSION,
     DetectedGame,
@@ -51,6 +52,8 @@ class ScanOptions:
     cache: ScanCache | None = None
     detectors: list[Detector] | None = None
     should_stop: StopCheck = None  # 0.9.0 (D58): asked between folders
+    # 1.2.0 (D73 8): told (folders looked at so far, the folder) before each folder
+    progress: Callable[[int, str], None] | None = None
 
 
 def compare_by_hash(local_dir: Path, mirror_dir: Path) -> tuple[int, int]:
@@ -113,6 +116,7 @@ def run_scan(options: ScanOptions) -> ScanReport:
                 max_depth=options.max_depth,
                 excludes=options.excludes,
                 should_stop=options.should_stop,
+                progress=options.progress,
             )
         except Stopped:
             if options.cache is not None:
@@ -130,6 +134,8 @@ def run_scan(options: ScanOptions) -> ScanReport:
             annotate_known_games(games, known, catalog["overrides"])
         for game in games:
             game.status = game_status(game)
+            # 1.2.0 (D73 6, 7, 13): every install, fully described
+            complete_installs(game, ctx.memo.get("listings"))
 
         saves_root, _ = default_saves_root(options.env, options.saves_root_override)
         warnings = list(found.warnings)

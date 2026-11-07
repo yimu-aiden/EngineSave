@@ -13,6 +13,15 @@ if TYPE_CHECKING:
     from enginesave.restore import RestorePlan
 
 
+def from_install_text(summary: dict[str, Any]) -> str:
+    """1.2.0 (D73 14): 「来自 0.4.0」 beside a snapshot, the version of the install it was
+    backed up from (its folder's name when no version was read); empty when it does not say."""
+    found = summary.get("from_install")
+    if not isinstance(found, dict) or not found.get("game_root"):
+        return ""
+    return _("来自 {v}", v=found.get("game_version") or Path(str(found["game_root"])).name)
+
+
 def restore_options(
     snapshot_id: str,
     game_root_text: str,

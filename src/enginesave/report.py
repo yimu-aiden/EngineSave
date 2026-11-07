@@ -237,7 +237,9 @@ def render_backup_plan(plan: BackupPlan) -> str:
 def render_backup_result(result: BackupResult, repo_root: Path) -> str:
     lines = [f"Backup summary ({repo_root}):"]
     for r in result.results:
-        label = {"ok": "OK", "partial": "PARTIAL", "failed": "FAILED"}[r.status]
+        label = {"ok": "OK", "partial": "PARTIAL", "failed": "FAILED"}.get(
+            r.status, r.status.upper()
+        )  # 1.2.0 (D73 2): UNCHANGED
         detail = (
             f"snapshot {r.snapshot_id}  {r.file_count} files  {human_size(r.total_bytes)}"
             if r.snapshot_id
@@ -254,10 +256,16 @@ def render_backup_result(result: BackupResult, repo_root: Path) -> str:
     counts = {
         k: sum(1 for r in result.results if r.status == k) for k in ("ok", "partial", "failed")
     }
+    unchanged = sum(1 for r in result.results if r.status == "unchanged")
     lines.append(
         f"Result: {counts['ok']} ok, {counts['partial']} partial, {counts['failed']} failed, "
-        f"{len(result.skipped)} skipped"
+        f"{len(result.skipped)} skipped" + (f", {unchanged} unchanged" if unchanged else "")
     )
+    if result.pruned is not None and result.pruned["removed"]:  # D73 3
+        count = sum(len(item["snapshot_ids"]) for item in result.pruned["removed"])
+        lines.append(
+            f"Removed {count} older auto snapshot(s) (--keep-auto {result.pruned['keep']})"
+        )
     return "\n".join(lines)
 
 

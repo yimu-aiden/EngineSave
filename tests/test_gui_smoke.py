@@ -3263,3 +3263,76 @@ def test_a_language_switch_keeps_the_library_pages_ticks_selection_and_verificat
         again = [library.verify_tree.item(i, "values") for i in library.verify_tree.get_children()]
         assert [r[:7] for r in again] == [r[:7] for r in rows], choice
     assert i18n.language() == "zh"
+
+
+# ------------------------------------------------------------------------- 1.2.0 (D73)
+
+
+def test_auto_snapshots_and_where_a_snapshot_came_from_are_shown(
+    app, answers: Answers, games_root: Path, saves_root: Path, tmp_path: Path
+) -> None:
+    """D73 3: an automatic backup says 「自动」 on the library page; D73 14: the restore
+    dialog says which version a snapshot came from (「来自 1.0」)."""
+    from enginesave.backup import execute_backup, prepare_backup
+    from enginesave.gui.views.dialogs import RestoreDialog
+    from enginesave.repo import Repo
+
+    built = build_f1(games_root, saves_root)
+    plan = prepare_backup([games_root], tmp_path / "library", saves_root_override=saves_root)
+    execute_backup(plan, Repo.open_or_create(plan.dest), reason="auto")
+    answers.directory = str(games_root)
+    app.add_root()
+    assert app.set_repo(tmp_path / "library")
+    wait(app)
+    library = app.library
+    library.record_tree.selection_set(next(iter(library.records)))
+    app.root.update()
+    rows = [library.snapshot_tree.item(i, "values") for i in library.snapshot_tree.get_children()]
+    assert [str(r[2]) for r in rows] == ["自动"]
+    library.restore()
+    dialog = app.last_dialog
+    assert isinstance(dialog, RestoreDialog)
+    settle(app)
+    assert dialog.snapshot.get().endswith("来自 1.0")
+    assert str(built.root) in {str(p) for p, _ in dialog.candidates}
+    dialog.cancel()
+    assert answers.messages("showerror") == []
+
+
+def test_the_window_opens_the_library_and_record_it_is_given(
+    root, games_root: Path, saves_root: Path, tmp_path: Path
+) -> None:
+    """D73 10: ``--library DIR --game ID``: the library page with the record selected; the
+    settings keep their own library."""
+    from enginesave.backup import execute_backup, prepare_backup
+    from enginesave.gui.app import App, option_value
+    from enginesave.repo import Repo
+
+    build_f1(games_root, saves_root)
+    plan = prepare_backup([games_root], tmp_path / "library", saves_root_override=saves_root)
+    execute_backup(plan, Repo.open_or_create(plan.dest))
+    settings_file = tmp_path / "appdata" / "EngineSave" / "gui.json"
+    usual = tmp_path / "usual library"
+    save_settings(GuiSettings(repo_path=str(usual)), settings_file)
+    window = App(
+        root,
+        settings_file=settings_file,
+        logs=settings_file.parent / "logs",
+        env=env_without_override(),
+        library=tmp_path / "library",
+        game="ReadableGame-1600000001",
+    )
+    try:
+        window.root.update()  # the library is read once the window is up (after_idle)
+        wait(window)
+        window.root.update()
+        assert window.notebook.select() == str(window.library)
+        selected = window.library.selected_record()
+        assert selected is not None and selected.name == "Readable Game"
+        window.save_settings()
+        assert json.loads(settings_file.read_text(encoding="utf-8"))["repo_path"] == str(usual)
+    finally:
+        finish(window)
+    args = ["--library", r"D:\备份\库", "--game=abc"]
+    assert option_value(args, "--library") == r"D:\备份\库"
+    assert option_value(args, "--game") == "abc" and option_value(args, "--x") is None

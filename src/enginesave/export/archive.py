@@ -159,6 +159,8 @@ def anonymized(
     ]
     sources = [{**s, "origin_path": token_location(s)} for s in manifest.get("sources", [])]
     clean_manifest = _scrub({**manifest, "sources": sources}, known)
+    if "from_install" in clean_manifest:  # 1.2.0 (D73 14): a folder of this computer
+        clean_manifest["from_install"] = None
     templates = [
         t
         for t in doc.get("source_templates", [])

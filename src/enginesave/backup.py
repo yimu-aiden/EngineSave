@@ -7,6 +7,8 @@ is never committed and never reported as a success."""
 from __future__ import annotations
 
 import contextlib
+import copy
+import hashlib
 import logging
 import os
 import uuid
@@ -33,6 +35,7 @@ from enginesave.fsutil import (
     long_path,
     path_key,
     safe_join,
+    sha256_file,
     source_files,
     utc_now,
 )
@@ -92,6 +95,8 @@ class PlannedGame:
     game: DetectedGame | None = None
     unlinked: UnlinkedSaveDir | None = None
     game_id: str | None = None  # known catalog record; None → a new record is created
+    # 1.2.0 (D73 14): {"game_root", "game_version"} of the install the snapshot comes from
+    from_install: dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -100,6 +105,7 @@ class PlannedGame:
             "version": self.version,
             "game_root": self.game.game_root if self.game else None,
             "game_id": self.game_id,
+            "from_install": self.from_install,
             "sources": [
                 {
                     "source_id": ps.source.source_id,
@@ -134,7 +140,8 @@ class BackupPlan:
 class GameResult:
     display_name: str
     kind: str
-    status: str  # "ok" | "partial" | "failed"
+    # "ok" | "partial" | "failed"; 1.2.0 (D73 2): "unchanged" with --skip-unchanged
+    status: str
     game_id: str | None = None
     snapshot_id: str | None = None
     file_count: int = 0
@@ -145,20 +152,29 @@ class GameResult:
     storage: str | None = None  # manifest "storage" of the committed snapshot
 
 
+SUCCESS = ("ok", "unchanged")  # 1.2.0 (D73 2): nothing new to keep is a success too
+
+
 @dataclass
 class BackupResult:
     results: list[GameResult] = field(default_factory=list)
     skipped: list[dict] = field(default_factory=list)
     cancelled: bool = False  # D58: stopped between files; what is in ``results`` is done
+    pruned: dict[str, Any] | None = None  # 1.2.0 (D73 3): what --keep-auto removed
+    mirror: dict[str, Any] | None = None  # 1.2.0 (D73 16): the mirror after the backup
 
     @property
     def exit_code(self) -> int:
-        return 1 if any(r.status != "ok" for r in self.results) else 0
+        return 1 if any(r.status not in SUCCESS for r in self.results) else 0
 
     def to_dict(self) -> dict[str, Any]:
         data: dict[str, Any] = {"results": [vars(r) for r in self.results], "skipped": self.skipped}
         if self.cancelled:  # 0.9.0: only when it was stopped
             data["cancelled"] = True
+        if self.pruned is not None:  # 1.2.0: only with --keep-auto
+            data["pruned"] = self.pruned
+        if self.mirror is not None:  # 1.2.0: only with --mirror or --auto-mirror
+            data["mirror"] = self.mirror
         return data
 
 
@@ -283,8 +299,35 @@ def _select_roots(games: list[DetectedGame], roots: Sequence[str | Path]) -> lis
             chosen.append(game)
             hit |= keys & wanted.keys()
     if missing := [wanted[k] for k in wanted.keys() - hit]:
-        raise UsageError(f"selected game folders were not found by the scan: {', '.join(missing)}")
+        raise UsageError(
+            "selected game folders were not found by the scan (not the folder of a game "
+            f"EngineSave recognises): {', '.join(missing)}"
+        )
     return chosen
+
+
+def from_install(
+    game: DetectedGame,
+    sources: Sequence[SaveSource],
+    select_roots: Sequence[str | Path] | None = None,
+) -> dict[str, Any] | None:
+    """1.2.0 (D73 14): the install a snapshot of ``game`` comes from, ``{"game_root",
+    "game_version"}``: the one chosen (``--game-root``, the window's ticks), else the game's
+    only install, else the one install all of its local sources are in; ``None`` when several
+    installs take part (a Ren'Py game whose versions were grouped, D9)."""
+    installs = [i for i in game.installs if i.get("game_root")]
+    chosen: list[dict[str, Any]] = []
+    if select_roots:
+        wanted = {path_key(root) for root in select_roots}
+        chosen = [i for i in installs if path_key(i["game_root"]) in wanted]
+    if not chosen and len(installs) == 1:
+        chosen = installs
+    if not chosen:
+        roots = {path_key(s.install_root) for s in sources if s.install_root}
+        chosen = [i for i in installs if path_key(i["game_root"]) in roots]
+    if len(chosen) != 1:
+        return None
+    return {"game_root": str(chosen[0]["game_root"]), "game_version": chosen[0].get("game_version")}
 
 
 def plan_backup(
@@ -335,6 +378,7 @@ def plan_backup(
                 game,
                 None,
                 game_id,
+                from_install(game, eligible, select_roots),
             )
         )
     if include_unlinked is not None:
@@ -457,7 +501,7 @@ def build_snapshot(
         stable = _state(before) == _state(after)
         sources.append(_manifest_source(src, data_rel, copied, copied_bytes, stable))
     complete = not errors and all(s["consistency"] == "stable" for s in sources)
-    return {
+    manifest = {
         "format_version": MANIFEST_FORMAT,
         "snapshot_id": snapshot_id,
         "created_at": iso_utc(now),
@@ -470,6 +514,9 @@ def build_snapshot(
         "files": files,
         "errors": errors,
     }
+    if planned.kind == "game" and reason != "pre_restore":  # 1.2.0 (D73 14)
+        manifest["from_install"] = planned.from_install
+    return manifest
 
 
 def _new_game_doc(planned: PlannedGame, game_id: str, now: str) -> dict[str, Any]:
@@ -504,21 +551,29 @@ def _new_game_doc(planned: PlannedGame, game_id: str, now: str) -> dict[str, Any
 
 
 def touch_install(installs: list[dict], install: dict, now: str) -> None:
+    """Add the install folder to a record's ``installs`` or update it there; none is ever
+    dropped (a backup of one install keeps the others, D73 14). 1.2.0 (D73 7): its
+    ``game_version`` too, when the scan read one."""
     for item in installs:
         if path_key(item["game_root"]) == path_key(install["game_root"]):
             item["last_seen"] = now
             item.pop("removed_at", None)  # installed again after a cleanup (D26)
             if install.get("config_version"):
                 item["config_version"] = install["config_version"]
+            if install.get("game_version"):
+                item["game_version"] = install["game_version"]
+                item["game_version_source"] = install.get("game_version_source")
             return
-    installs.append(
-        {
-            "game_root": install["game_root"],
-            "config_version": install.get("config_version"),
-            "first_seen": now,
-            "last_seen": now,
-        }
-    )
+    added = {
+        "game_root": install["game_root"],
+        "config_version": install.get("config_version"),
+        "first_seen": now,
+        "last_seen": now,
+    }
+    if install.get("game_version"):
+        added["game_version"] = install["game_version"]
+        added["game_version_source"] = install.get("game_version_source")
+    installs.append(added)
 
 
 def record_snapshot(
@@ -770,14 +825,22 @@ def execute_backup(
     reason: str = "manual",
     progress: Callable[[int, int, str], None] | None = None,
     should_stop: StopCheck = None,
+    skip_unchanged: bool = False,
+    keep_auto: int | None = None,
 ) -> BackupResult:
     """Back up every planned game; ``progress(done, total, next_name)`` precedes each one.
 
     ``should_stop`` (D58) is asked between files: the game being copied gets no snapshot
     (its temporary folder is removed), the games done keep theirs, the rest are not started;
     ``cancelled`` says so.
+
+    1.2.0 (D73 2): ``skip_unchanged`` makes no snapshot of a game whose saves are exactly
+    its record's latest snapshot (``unchanged``). D73 3: ``keep_auto`` then keeps only the
+    newest so many ``auto`` snapshots of each game backed up (``pruned``).
     """
     repo.require_writable()  # D67 8: a library of format 1 is migrated first
+    if keep_auto is not None and keep_auto < 1:
+        raise UsageError("--keep-auto must be 1 or more")
     catalog = repo.load_catalog()
     result = BackupResult(skipped=list(plan.skipped))
     try:
@@ -785,14 +848,175 @@ def execute_backup(
             stop_point(should_stop)
             if progress is not None:
                 progress(index, len(plan.games), planned.display_name)
+            same = unchanged_snapshot(repo, planned) if skip_unchanged else None
+            if same is not None:
+                result.results.append(note_unchanged(repo, catalog, planned, same))
+                continue
             done = backup_game(repo, catalog, planned, reason=reason, should_stop=should_stop)
             result.results.append(done)
     except Stopped:
         result.cancelled = True
     pin_shared_folders(repo, plan, result)
+    if keep_auto is not None and not result.cancelled:
+        ids = [r.game_id for r in result.results if r.game_id and r.status != "failed"]
+        result.pruned = prune_auto(repo, ids, keep_auto, should_stop=should_stop)
     if result.results:
         layout.write_index(repo)  # D67 5
     return result
+
+
+# ------------------------------------------------- unchanged saves, automatic ones (D73 2, 3)
+
+
+def unchanged_snapshot(repo: Repo, planned: PlannedGame) -> str | None:
+    """The record's latest snapshot (of any reason) when the saves ``planned`` would back up
+    now are exactly what it holds -- the same sources, the same files, byte for byte (SHA-256)
+    -- else ``None``. A partial latest snapshot, a file that cannot be read or listed, or a
+    record without snapshots never counts as unchanged."""
+    game_id = planned.game_id
+    if game_id is None or not repo.has_game(game_id):
+        return None
+    ids = repo.snapshot_ids(game_id)
+    if not ids:
+        return None
+    try:
+        manifest = repo.load_manifest(game_id, ids[-1])
+    except EngineSaveError:
+        return None
+    if manifest.get("status") != "complete" or manifest.get("errors"):
+        return None
+
+    def where(entry: Mapping[str, Any]) -> tuple[Any, ...]:
+        return (
+            entry.get("root_token"),
+            entry.get("relative_root"),
+            tuple(entry.get("patterns") or ()),
+            tuple(entry.get("excludes") or ()),
+        )
+
+    stored_sources = {s.get("source_id"): where(s) for s in manifest.get("sources") or []}
+    planned_sources = {
+        ps.source.source_id: where(
+            {
+                "root_token": ps.source.root_token.value,
+                "relative_root": ps.source.relative_root,
+                "patterns": ps.source.patterns,
+                "excludes": ps.source.excludes,
+            }
+        )
+        for ps in planned.sources
+    }
+    if stored_sources != planned_sources:
+        return None
+    stored = {
+        (f.get("source_id"), os.path.normcase(str(f.get("path")))): (f.get("size"), f.get("sha256"))
+        for f in manifest.get("files") or []
+    }
+    now: dict[tuple[str, str], tuple[int, Path | bytes]] = {}
+    for ps in planned.sources:
+        src = ps.source
+        if src.kind is SourceKind.REGISTRY and registry.is_key_path(src.path):
+            data = registry.export_key(registry.subkey_of(src.path))
+            if data is None:
+                return None
+            now[(src.source_id, os.path.normcase(registry.REG_FILE))] = (len(data), data)
+            continue
+        files, errors = source_files(Path(src.path), src.patterns, src.excludes)
+        if errors:
+            return None
+        for entry in files:
+            now[(src.source_id, os.path.normcase(entry.rel))] = (entry.size, entry.path)
+    if now.keys() != stored.keys():
+        return None
+    if any(now[key][0] != stored[key][0] for key in now):  # sizes first: no reading needed
+        return None
+    for key, (_size, content) in now.items():
+        try:
+            digest = (
+                hashlib.sha256(content).hexdigest()
+                if isinstance(content, bytes)
+                else sha256_file(content)[0]
+            )
+        except OSError:
+            return None
+        if digest != stored[key][1]:
+            return None
+    return ids[-1]
+
+
+def note_unchanged(repo: Repo, catalog: dict, planned: PlannedGame, same: str) -> GameResult:
+    """No snapshot for a game whose saves are its latest snapshot; the record still learns
+    the install folders this scan saw (D73 14), as a backup would have told it."""
+    assert planned.game_id is not None
+    if planned.game is not None:
+        now = iso_utc(utc_now())
+        doc = repo.load_game(planned.game_id)
+        before = copy.deepcopy(doc.get("installs") or [])
+        for install in planned.game.installs:
+            touch_install(doc.setdefault("installs", []), install, now)
+        if [i.get("game_root") for i in doc["installs"]] != [i.get("game_root") for i in before]:
+            doc["updated_at"] = now
+            repo.save_game(doc)
+            update_catalog_entry(repo, catalog, doc)
+        elif doc["installs"] != before:
+            repo.save_game(doc)  # versions and times of known installs; the catalog is as it was
+    total = sum(ps.total_bytes for ps in planned.sources)
+    return GameResult(
+        planned.display_name,
+        planned.kind,
+        "unchanged",
+        game_id=planned.game_id,
+        file_count=sum(len(ps.files) for ps in planned.sources),
+        total_bytes=total,
+        message=f"saves unchanged since snapshot {same}; no new snapshot",
+    )
+
+
+def auto_snapshots(repo: Repo, game_id: str) -> list[str]:
+    """The record's ``auto`` snapshots, oldest first (a manifest that cannot be read is never
+    one)."""
+    found = []
+    for snapshot_id in repo.snapshot_ids(game_id):
+        try:
+            if repo.load_manifest(game_id, snapshot_id).get("reason") == "auto":
+                found.append(snapshot_id)
+        except EngineSaveError:
+            continue
+    return found
+
+
+def prune_auto(
+    repo: Repo, game_ids: Sequence[str], keep: int, *, should_stop: StopCheck = None
+) -> dict[str, Any]:
+    """D73 3: keep only the newest ``keep`` ``auto`` snapshots of each record; ``manual``,
+    ``import`` and ``pre_restore`` snapshots are never removed here. The removal is the one of
+    ``enginesave remove`` (catalog first, then the folders, then the object store)."""
+    from enginesave.removal import execute_remove, plan_remove
+
+    requests = []
+    for game_id in dict.fromkeys(game_ids):
+        doomed = auto_snapshots(repo, game_id)[:-keep]
+        if doomed:
+            requests.append((game_id, doomed))
+    data: dict[str, Any] = {
+        "keep": keep,
+        "removed": [{"game_id": g, "snapshot_ids": list(s)} for g, s in requests],
+        "freed_bytes": 0,
+        "leftovers": [],
+        "gc_skipped": None,
+    }
+    if not requests:
+        return data
+    plan = plan_remove(repo, repo.load_catalog(), requests)
+    done = execute_remove(plan, should_stop=should_stop)
+    data.update(
+        freed_bytes=done.freed_bytes,
+        leftovers=list(done.leftovers),
+        gc_skipped=done.garbage.skipped,
+    )
+    if done.cancelled:
+        data["cancelled"] = True
+    return data
 
 
 def pin_shared_folders(repo: Repo, plan: BackupPlan, result: BackupResult) -> list[dict]:
@@ -870,6 +1094,8 @@ def prepare_backup(
     detectors: list[Detector] | None = None,
     cache: ScanCache | None = None,
     should_stop: StopCheck = None,
+    scan_progress: Callable[[int, str], None] | None = None,
+    scan_unlinked: bool = True,
     **plan_options: Any,
 ) -> BackupPlan:
     """Safety checks, scan and plan. Nothing is written to the library or the scanned folders;
@@ -897,6 +1123,9 @@ def prepare_backup(
             detectors=detectors,
             cache=cache,
             should_stop=should_stop,
+            progress=scan_progress,  # 1.2.0 (D73 8)
+            # D73 1: one game's folders only: the orphaned save folders need not be listed
+            include_unlinked=scan_unlinked or plan_options.get("include_unlinked") is not None,
         )
     )
     known: list[dict] = []

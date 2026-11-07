@@ -364,4 +364,5 @@ class ElectronDetector(common.EngineDetector):
             evidence=evidence,
             warnings=warnings,
             project=name,
+            game_version=common.package_version(package, where),  # 1.2.0 (D73 7)
         )

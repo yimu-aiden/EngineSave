@@ -71,6 +71,7 @@ from enginesave.fsutil import (
     sha256_file,
     utc_now,
 )
+from enginesave.lock import LOCK_NAME
 from enginesave.repo import (
     CATALOG,
     GAME_FILE,
@@ -319,7 +320,9 @@ def check_target(repo: Repo, target: Path, forbidden: Sequence[Path] = ()) -> st
     if target.exists() and not target.is_dir():
         raise UsageError(f"the mirror's folder is a file: {target}")
     try:
-        empty = not target.is_dir() or not any(target.iterdir())
+        empty = not target.is_dir() or not any(  # D73 4: a lock taken for this mirror
+            p.name != LOCK_NAME for p in target.iterdir()
+        )
     except OSError as exc:
         raise UsageError(f"the mirror's folder cannot be read ({describe_error(exc)})") from exc
     if empty:
@@ -1034,6 +1037,98 @@ def last_mirror(config: Path, source: Path) -> dict[str, str] | None:
     except ValueError:
         return None
     return {"to": to, "at": at}
+
+
+SETTINGS_FILE = "gui.json"  # the window's settings, beside mirrors.json
+
+
+def mirror_settings(config: Path) -> tuple[bool, bool]:
+    """``(auto_mirror, mirror_verify)`` as the window's settings say (both on by default, as
+    in the window; a damaged file or value counts as the default). Read only."""
+    try:
+        with open(long_path(config / SETTINGS_FILE), encoding="utf-8") as f:
+            data = json.load(f)
+    except (OSError, ValueError, RecursionError):
+        data = {}
+    data = data if isinstance(data, dict) else {}
+    auto, verify = data.get("auto_mirror", True), data.get("mirror_verify", True)
+    return (auto if isinstance(auto, bool) else True, verify if isinstance(verify, bool) else True)
+
+
+def mirror_after_backup(
+    repo: Repo,
+    config: Path,
+    *,
+    wanted: str,
+    backed_up: str | None,
+    forbidden: Sequence[Path] = (),
+    progress: Progress | None = None,
+    should_stop: StopCheck = None,
+    command: str = "enginesave backup --mirror",
+) -> dict[str, Any]:
+    """1.2.0 (D73 16): after a backup, mirror the library to the folder of its last mirror
+    that worked (``mirrors.json``), as the window does after a backup (D64).
+
+    ``wanted`` is ``"mirror"`` (always) or ``"auto"`` (when the window's 「自动镜像」 setting
+    is on); ``backed_up`` is ``None`` when the backup wrote something worth mirroring, else
+    why not. Returns ``{"folder", "status": "ok" | "skipped" | "failed", "finished_at",
+    "message"}``; nothing raised -- a mirror that fails never changes the backup's outcome."""
+    from enginesave.lock import library_lock
+
+    last = last_mirror(config, repo.root)
+    folder = last["to"] if last else None
+    outcome: dict[str, Any] = {
+        "folder": folder,
+        "status": "skipped",
+        "finished_at": None,
+        "message": "",
+    }
+    auto, verify = mirror_settings(config)
+    if wanted == "auto" and not auto:
+        outcome["message"] = "automatic mirroring is turned off in the window's settings"
+        return outcome
+    if last is None or folder is None:
+        outcome["message"] = "this library has not been mirrored successfully before"
+        return outcome
+    if backed_up is not None:
+        outcome["message"] = backed_up
+        return outcome
+    target = Path(folder)
+    outcome["status"] = "failed"
+    if not target.is_dir():  # never created here: a drive or a NAS not there now
+        outcome["message"] = f"the mirror folder is not there: {target}"
+        return outcome
+    try:
+        with library_lock(target, command):
+            result = mirror_repo(
+                repo,
+                target,
+                forbidden=forbidden,
+                verify=verify,
+                progress=progress,
+                should_stop=should_stop,
+            )
+    except EngineSaveError as exc:
+        outcome["message"] = str(exc)
+        return outcome
+    except OSError as exc:
+        outcome["message"] = describe_error(exc)
+        return outcome
+    if result.cancelled or result.verify_stopped:
+        outcome["message"] = "stopped at a safe point; the next mirror goes on from there"
+        return outcome
+    if result.exit_code != 0:
+        problems = [*result.failed, *result.unreadable]
+        outcome["message"] = "; ".join(problems[:3]) or "the mirror did not pass its verification"
+        return outcome
+    record_mirror(config, repo.root, result.target)
+    outcome["status"] = "ok"
+    outcome["finished_at"] = iso_utc(utc_now())
+    copied = result.snapshots_copied
+    outcome["message"] = f"{copied} new snapshot(s) copied" + (
+        ", verified" if result.verified else ""
+    )
+    return outcome
 
 
 def _mirrors(path: Path) -> dict[str, Any]:

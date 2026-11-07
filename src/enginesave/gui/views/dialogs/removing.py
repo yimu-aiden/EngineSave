@@ -211,6 +211,7 @@ class RemoveDialog(Dialog):
             status=_("正在删除备份…"),
             on_error=self.failed,
             cancellable=True,
+            lock=root,  # D73 4
         )
 
     def failed(self, exc: BaseException) -> None:

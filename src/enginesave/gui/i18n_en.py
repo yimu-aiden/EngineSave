@@ -873,4 +873,13 @@ EN: dict[str, str | tuple[str, str]] = {
     "本地": "Local",
     "全局": "Global",
     "备注": "Notes",
+    # 1.2.0 (D73)
+    "另一个程序正在写这个备份库，稍后再试。": (
+        "Another program is writing to this library; try again later."
+    ),
+    "（{holder}）": "({holder})",
+    "补写说明文件：%s": "Writing the missing README files: %s",
+    "自动": "auto",
+    "来自 {v}": "from {v}",
+    "没有打开指定的记录：%s": "The record asked for was not opened: %s",
 }

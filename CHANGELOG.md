@@ -6,6 +6,41 @@
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-11-07
+
+让 `enginesave-cli` 能由别的程序在后台、无窗口、非交互地调用（D73，总是 `--json --yes`），并按"安装目录"报告游戏、在快照里记下它来自哪个安装。全部是加法：已有参数、字段与退出码的含义不变，`--json` 只多了字段（各输出的格式号不变，`enginesave about` 可查）；新增退出码 4（备份库正忙）。备份库与快照清单的格式号不变：清单多了可选的 `from_install`，`game.json` 的安装项多了可选的 `game_version`，库根多了运行中才有的 `enginesave.lock`；1.1.0 照样能读写 1.2.0 写过的备份库。
+
+记录与安装（D73 ⓪）：一条记录仍是一份存档的归属，不分版本；几个版本目录归到哪条记录照旧按存档身份决定（D9、D48、6.6 规则不变）。1.2.0 只是把每个安装目录的信息报告清楚（版本、启动程序、其中的本地存档），并在快照里记下它来自哪个安装，使游戏目录删掉后在别的路径重新出现时，恢复也能选对本地存档。
+
+### Added
+
+- **按安装报告**（D73 ⑬）：扫描报告里每个游戏（所有引擎，含不支持的）都有完整的 `installs`，只有一个目录也列一项；每项带 `game_root`、`config_version`、`engine_version`，以及新的 `game_version`、`game_version_source`、`launch_candidates`。Ren'Py 照旧把同一游戏的几个版本目录合并成一个游戏（D9），这些信息挂到各自的安装上。来源多了 `install_root`：本地来源（`local`、`local-2`…）是它所在的安装目录，全局、注册表等来源为 `null`。
+- **启动候选**（D73 ⑥）：每个安装的 `launch_candidates: [{"path", "reason"}]`，路径相对安装目录（`/` 分隔），按把握从高到低：Ren'Py 与 `exe_basename` 同名的 exe（`-32.exe` 排后）；RPG Maker MV/MZ 与 XP/VX/VX Ace 有同名 `.ini` 的 exe、`Game.exe`；Unity 旁边有 `<名字>_Data` 的 exe；Unreal 根目录的启动 exe，其次 `<项目>\Binaries\Win64\*-Shipping.exe`；Electron `resources` 旁的主 exe（与应用同名的优先）；Godot 与 `.pck` 同名的 exe；Emuera `Emuera*.exe`；Wolf、KiriKiri 根目录的 exe（不是引擎通用名的优先）；其后是目录里其余的 exe。辅助程序一律不列：原有的 `HELPER_EXES`/`HELPER_NAMES`，再加 `*crash*`、`dxsetup*`、`vcredist*`、`UE4PrereqSetup*`。`identity.exe_basename` 的含义不变。为不多列一次目录，候选用扫描时已经读过的目录列表（D52）。
+- **游戏版本**（D73 ⑦）：`game_version` 只取文件里明写的——Ren'Py 的 `config.version`，Electron 与 NW.js（含 RPG Maker MV/MZ）`package.json` 的 `version`（跳过 `0.0.0`、`0.0.1`、`0.1.0`、`1.0.0` 这类工具默认值）；`game_version_source` 写出处（`config.version`、`resources/app.asar!package.json version`…），没有时两者都是 `null`。不从目录名猜。Unity 的 `bundleVersion` 存在 `globalgamemanagers` 的二进制 PlayerSettings 里，发布版不带类型信息，读不可靠，所以 1.2.0 对 Unity 给 `null`（字段已留好）。
+- **HTML 游戏**（D73 ⑫）：根目录有入口 `.html`、没有任何 exe 的文件夹（Twine/SugarCube/Harlowe 等的故事页，或带脚本、加载旁边资源文件夹的页面）认作引擎 `html`、状态 `UNSUPPORTED`，`launch_candidates` 给入口页（Twine 故事页在前）；不找存档（存在浏览器里），不再往里走。只有说明文字、没有脚本的页面不算。
+- **`backup --game-root PATH`**（D73 ①，可重复）：只扫描并备份这些安装目录（每个目录本身，不往下走，也不列孤立存档目录），与窗口里勾选游戏（`plan_backup` 的 `select_roots`）同一套；PATH 不是认得出的游戏目录时退出码 2 并写明。这时可以不带 `ROOT`（带了也不扫描，只用来检查备份库不在里面）。一个游戏通常几秒内完成。
+- **快照记下来自哪个安装**（D73 ⑭）：清单的 `from_install: {"game_root", "game_version"}`——`--game-root`（或窗口的勾选）选的那个安装；游戏只有一个安装时是它；否则是本地存档都在其中的那一个；几个安装一起参与（合并的 Ren'Py 游戏整个备份）时为 `null`；孤立存档目录与安全快照没有这个字段。备份进这个安装所在游戏的记录，记录里已知的其他安装一个也不丢（安装项多了 `game_version`）。`show --json` 的快照列表、`list --json` 的最新快照（`latest_from_install`）都带上它；窗口的恢复对话框在快照旁写"来自 0.4.0"（没有版本号时写目录名）。备份计划（`plan.games[].from_install`）也有。匿名导出（默认）里它是 `null`，不带出本机路径。
+- **`backup --skip-unchanged`**（D73 ②）：要备份的存档与这条记录最新快照（任何来源）完全相同——同样的来源、同样的文件、逐个 SHA-256 相同——时不建快照，`status` 为新的枚举值 `unchanged`，`message` 写明与哪个快照相同，按成功计（退出码 0）；记录仍记下这次见到的安装目录。最新快照不完整、或有文件读不出时照常备份。
+- **`backup --reason auto`、`--keep-auto N`**（D73 ③）：快照的 `reason` 记 `auto`（快照的 `README.txt` 写"自动"，窗口备份库页写"自动"）；`restore --snapshot latest`（以及清理、导出等的 `latest`）能选到 `auto`，`pre_restore` 仍不选。`--keep-auto N`（N ≥ 1）：备份后这次备份到的每个游戏只留最新 N 份 `auto` 快照，`manual`、`import`、`pre_restore` 永不因此删除；删除走 `remove` 的同一条路（先目录、再快照文件夹、最后回收对象库），结果在 `result.pruned`。
+- **备份库写锁**（D73 ④）：所有写库的命令（`backup`、`restore`、`cleanup`、`import`、`migrate`、`remove --yes`、`link`、`confirm-source`；`mirror` 锁镜像那一边）与窗口里的写操作（备份、恢复、清理、导入、删除、确认 / 关联、迁移、清理临时文件夹、重命名、补写说明、镜像），开始时在库根目录排他地建 `enginesave.lock`（写进程号、命令、开始时间、计算机名），结束时——出错与 Ctrl+C 也一样——删除。已被锁时立刻退出，**新退出码 4 = 备份库正忙**，`--json` 时 stdout 是 `{"error": "library_busy", "holder": {...}}`。持锁进程已不在（或进程号已被后来的进程占用）的旧锁自动清掉并在日志里写一行；别的计算机的锁（网络位置上的库）不自动清。窗口遇到锁时提示"另一个程序正在写这个备份库，稍后再试"。只读命令（`list`、`show`、`verify`、`scan --repo`）与预览（`--dry-run`、不带 `--yes` 的 `remove`）不受锁限制。只有锁文件的文件夹仍算空的，可以新建备份库或镜像。
+- **`list --json`**（D73 ⑤）：每条记录多了 `latest_snapshot_at`（ISO-8601 UTC）、`latest_reason`、`latest_from_install`、`installs`（记录知道的安装目录，最近见到的在前：`game_root`、`game_version`、`present`、`first_seen`、`last_seen`、`removed_at`；不在了的也列着）；`stats` 多了 `mirror_folder`（上次镜像的文件夹，没有时 `null`）。
+- **`--progress jsonl`**（D73 ⑧，`scan`、`backup`）：stderr 每行一个 JSON：`{"event":"progress","phase":"scan","folders":n,"current":"…"}`（至多每 0.5 秒一行）、`{"event":"progress","phase":"backup","done":n,"total":m,"name":"…"}`（每个游戏开始前一行，结束时 `done` = `total` 一行），镜像时 `"phase":"mirror"`。这时 `--json` 不再往 stderr 写给人看的报告（错误与警告照旧是普通文字行）。不带这个参数时输出完全照旧。
+- **`--stop-file PATH`**（D73 ⑨，`scan`、`backup`）：这个文件出现时在下一个安全点停下（与 Ctrl+C 相同的安全点，D58），退出码 130。
+- **窗口参数 `--library DIR --game ID`**（D73 ⑩）：打开后切到备份库页并选中这条记录（ID 可以是记录 ID、前缀、存档目录或名称）；DIR 只用于这一次，设置里的备份库不变。
+- **`enginesave-cli about [--json]`**（D73 ⑪）：`{"tool_version", "formats": {"scan": 1, "list": 1, "backup": 1, …}, "library": {"catalog": 2, "manifest": 3, "export": 2}}`。
+- **恢复到某个安装时自动选对本地存档**（D73 ⑮）：`restore --game-root NEW` 遇到快照里有几个安装的本地来源（`local`、`local-2`…）时，不再直接拒绝，而是用 `--from-install PATH` 指定的那个安装的来源；不给时用快照的 `from_install`；都没有才照旧要求 `--sources`。NEW 可以是记录里还没有的目录（新版本，或删掉后重新下载回来的同一版本），身份检查（存档目录 / 引擎与标题）照旧。恢复计划多了 `from_install`（恢复的本地存档来自哪个安装）。`--dry-run --json` 与 `--yes --json` 不需要控制台。
+- **命令行备份后镜像**（D73 ⑯）：`backup --mirror` 镜像到这个库上次成功镜像的文件夹（`mirrors.json`，与窗口相同；这个库以前成功镜像过才做），`backup --auto-mirror` 照窗口设置里"备份完成后自动镜像"的开关决定；校验与否照"镜像后校验"。与窗口一样只在这次备份写出了快照、且没有失败与取消时才镜像。结果 JSON 的 `result.mirror: {"folder", "status": "ok|skipped|failed", "finished_at", "message"}`；镜像失败（文件夹不在、镜像正忙、复制或校验失败）不影响备份本身的退出码，只在 `mirror.status` 里写明。
+
+### Changed
+
+- 备份结果的文字输出：`unchanged` 的游戏写 `UNCHANGED`，有时结果行末尾加 `, N unchanged`；用了 `--keep-auto` 且删了快照时加一行。没有这些时输出不变。
+- `backup` 的 `ROOT` 不再是必填（给了 `--game-root` 时）；两者都没有时退出码 2，与以前缺参数相同。
+
+### Notes
+
+- 这些用法原来就能非交互地使用，这次补了测试：`cleanup --dry-run --json`（完整的检查结果，不通过时退出码 2）、`cleanup --yes --json`（没有控制台，回收站满时默认 `stop`），`link --game --game-root --json`（之后带这个库的扫描认得出这个目录）。
+- 记录文件夹名（D73 ⑰）：D67 ① 的文件夹名只在与别的记录重名时才加 `(<版本>)`（第一次备份时的版本），一般就是游戏名，跨版本也不显得过时。这次不自动改名（改名会让镜像跟着改、并打乱用户熟悉的路径），需要时用备份库页右键"按当前名字重命名文件夹…"。
+
 ## [1.1.0] - 2026-10-29
 
 改名为 EngineSave（"按引擎找存档"更准确），第一个公开版本。备份库格式不变，SaveTrail 建的备份库直接打开，不需要迁移。
@@ -388,5 +423,6 @@
 - `tokens/security_keys.txt` 是 Ren'Py 的存档签名私钥，默认不备份，只有显式 `--include-tokens` 才会复制。
 - 恢复前校验整个快照清单，含越界路径（如 `../`）或格式错误时一个文件都不写；恢复从不删除目标里多出来的文件；被篡改或损坏的备份副本不会写进游戏目录；恢复私钥目录 `tokens/` 需要显式指定并在终端再次确认。
 
-[Unreleased]: https://github.com/yimu-aiden/EngineSave/compare/v1.1.0...HEAD
+[Unreleased]: https://github.com/yimu-aiden/EngineSave/compare/v1.2.0...HEAD
+[1.2.0]: https://github.com/yimu-aiden/EngineSave/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/yimu-aiden/EngineSave/releases/tag/v1.1.0

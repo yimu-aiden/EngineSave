@@ -210,6 +210,8 @@ class ScanAndBackup:
             status=_("正在准备备份（只读扫描）…"),
             determinate=True,
             cancellable=True,
+            lock=Path(repo),  # D73 4
+            new_library=True,
         )
 
     def one_click_progress(self, value: tuple[str, Any]) -> None:
@@ -322,6 +324,8 @@ class ScanAndBackup:
             status=_("正在备份…"),
             determinate=True,
             cancellable=True,
+            lock=Path(plan.dest),  # D73 4
+            new_library=True,
         )
 
     def backup_progress(self, value: tuple[int, int, str]) -> None:
@@ -413,20 +417,26 @@ class ScanAndBackup:
 
         def job(progress: Callable[[Any], None]) -> Any:
             from enginesave.errors import UsageError
+            from enginesave.gui.app import locked_job
             from enginesave.mirror import forbidden_places, mirror_repo
 
             if not target.is_dir():  # never created here: a drive not plugged in, say
                 raise UsageError(_("镜像文件夹不在（{target}）", target=target))
             repo = Repo.open(repo_root)
             places = forbidden_places(repo, saves_root=override, env=env, also=roots)
-            return mirror_repo(
-                repo,
+            write = locked_job(  # D73 4: the mirror is a library written into
+                lambda _p: mirror_repo(
+                    repo,
+                    target,
+                    forbidden=places,
+                    verify=verify,
+                    progress=lambda done, total, name: progress((done, total, name)),
+                    should_stop=stop,
+                ),
                 target,
-                forbidden=places,
-                verify=verify,
-                progress=lambda done, total, name: progress((done, total, name)),
-                should_stop=stop,
+                _("自动镜像"),
             )
+            return write(progress)
 
         def failed(exc: BaseException) -> None:
             if not isinstance(exc, EngineSaveError):

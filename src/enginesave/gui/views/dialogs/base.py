@@ -165,8 +165,10 @@ class Dialog(tk.Toplevel):
         progress: Callable[[Any], None] | None = None,
         on_error: Callable[[BaseException], None] | None = None,
         cancellable: bool = False,
+        lock: Path | None = None,
     ) -> bool:
         """Run ``job`` through the window's task runner with this dialog's buttons disabled.
+        ``lock``: the library the job writes into (1.2.0, D73 4, :meth:`App.run`).
 
         Errors are shown in a message box unless ``on_error`` handles them (the automatic,
         read-only checks put them into the dialog instead). Returns whether the job started.
@@ -199,6 +201,7 @@ class Dialog(tk.Toplevel):
             status=status,
             determinate=progress is not None,
             cancellable=cancellable,
+            lock=lock,
         ):
             self.busy = False
             return False

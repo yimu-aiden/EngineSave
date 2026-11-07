@@ -279,7 +279,22 @@ class LibraryView(ttk.Frame):
             for note in result.notes[:5]:
                 log.warning(note)
 
-        self.app.run(_("补写说明文件"), job, done, status=_("正在补写说明文件…"))
+        def failed(exc: BaseException) -> None:
+            from enginesave.lock import LibraryBusy
+
+            if isinstance(exc, LibraryBusy):  # D73 4: next time it is read, it tries again
+                log.info(_("补写说明文件：%s"), exc)
+            else:
+                self.app.show_error(exc)
+
+        self.app.run(
+            _("补写说明文件"),
+            job,
+            done,
+            on_error=failed,
+            status=_("正在补写说明文件…"),
+            lock=Path(root),  # D73 4
+        )
 
     def show_rows(self, select: str | None = None) -> None:
         """The records in their two groups, those matching the search box (D43, D46); the
@@ -672,6 +687,7 @@ class LibraryView(ttk.Frame):
             lambda _p: repo.rename_folder(row.game_id),
             done,
             status=_("正在重命名记录文件夹…"),
+            lock=repo.root,  # D73 4
         )
 
     def double_click(self, event: tk.Event) -> None:

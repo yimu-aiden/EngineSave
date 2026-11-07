@@ -58,7 +58,10 @@ DATA_DIR = "data"
 OBJECTS_DIR = "objects"
 OBJECT_ALGO = "sha256"
 TMP_PREFIX = ".tmp-"
-USER_REASONS = ("manual", "import")  # snapshots `latest` may pick; pre_restore is automatic
+# snapshots `latest` may pick; pre_restore is automatic. 1.2.0 (D73 3): "auto", a backup a
+# program started (after a game was closed) -- a backup like any, pruned by --keep-auto only
+USER_REASONS = ("manual", "import", "auto")
+REASONS = ("manual", "import", "auto", "pre_restore")
 # A snapshot id: 0.1.0-0.10.0 UTC ``YYYYMMDDTHHMMSSZ`` with ``-1``, ``-2``... (D11); 0.11.0 the
 # local time ``YYYY-MM-DD HH-MM-SS`` with `` (2)``, `` (3)``... (D67 2). Both stay valid.
 OLD_SNAPSHOT_ID = r"(\d{8}T\d{6}Z)(?:-(\d+))?"
@@ -230,6 +233,19 @@ def read_manifest(path: Path) -> dict:
     return _check_format(_read_json(path, MANIFEST), MANIFEST, path, MANIFEST_FORMATS)
 
 
+def from_install_of(manifest: Mapping[str, Any]) -> dict[str, Any] | None:
+    """1.2.0 (D73 14): a manifest's ``from_install`` ``{"game_root", "game_version"}`` when it
+    is one; ``None`` otherwise (an older snapshot, several installs, a damaged value)."""
+    value = manifest.get("from_install")
+    if not isinstance(value, dict) or not isinstance(value.get("game_root"), str):
+        return None
+    version = value.get("game_version")
+    return {
+        "game_root": value["game_root"],
+        "game_version": version if isinstance(version, str) else None,
+    }
+
+
 def game_removed(doc: Mapping[str, Any]) -> bool:
     """Every recorded install of the game was cleaned up (D26)."""
     installs = [i for i in doc.get("installs", []) if isinstance(i, dict) and i.get("game_root")]
@@ -257,11 +273,13 @@ def install_present(doc: Mapping[str, Any]) -> bool:
 
 def destination_state(dest: Path) -> str:
     """``"existing"`` (has a catalog), ``"new"`` (absent or empty); refuses anything else."""
+    from enginesave.lock import only_lock
+
     if (dest / CATALOG).is_file():
         return "existing"
     if dest.exists() and not dest.is_dir():
         raise UsageError(f"destination is not a directory: {dest}")
-    if dest.is_dir() and any(dest.iterdir()):
+    if dest.is_dir() and not only_lock(dest):  # 1.2.0 (D73 4): our own lock is no content
         raise UsageError(
             f"destination exists, is not empty and has no {CATALOG}; refusing to write "
             f"into it: {dest}"
@@ -1131,6 +1149,8 @@ class Repo:
         }
         if "storage" in manifest:  # format 2 (D18); format-1 output stays exactly as in 0.1.0
             summary["storage"] = manifest["storage"]
+        # 1.2.0 (D73 14): the install it came from; null when the snapshot does not say
+        summary["from_install"] = from_install_of(manifest)
         return summary
 
     def latest_snapshot(self, game_id: str) -> str | None:

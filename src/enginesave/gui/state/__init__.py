@@ -128,6 +128,7 @@ from enginesave.gui.state.library import (
     SnapshotRow,
     check_count_text,
     group_label,
+    reason_text,
     record_groups,
     record_rows,
     record_version,
@@ -204,6 +205,7 @@ from enginesave.gui.state.removing import (
     whole_record,
 )
 from enginesave.gui.state.restoring import (
+    from_install_text,
     restore_choose_root,
     restore_notes,
     restore_options,
@@ -406,6 +408,7 @@ __all__ = [
     "export_target",
     "file_state",
     "folder",
+    "from_install_text",
     "full_bin_heading",
     "full_bin_status",
     "game_detail_lines",
@@ -443,6 +446,7 @@ __all__ = [
     "overview_text",
     "plan_totals",
     "plan_warnings",
+    "reason_text",
     "record_choice_name",
     "record_folders",
     "record_groups",

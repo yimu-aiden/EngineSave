@@ -164,6 +164,7 @@ class ConfirmLinkDialog(Dialog):
             job,
             self.confirmed,
             status=_("正在写入 {display_name} 的关联…", display_name=game.display_name),
+            lock=root,  # D73 4
         )
 
     def confirmed(self, value: Confirmed) -> None:
