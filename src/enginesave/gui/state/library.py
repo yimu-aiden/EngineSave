@@ -144,6 +144,15 @@ def check_count_text(checked: int, hidden: int) -> str:
     return _("已勾选 {checked} 条", checked=checked)
 
 
+AUTO_REASON = "自动"  # 1.2.0 (D73 3): a backup another program started
+
+
+def reason_text(reason: object) -> str:
+    """A snapshot's reason as the 「原因」 column shows it: ``auto`` as 「自动」, the others
+    by their names (``manual``, ``import``, ``pre_restore``) as before."""
+    return _(AUTO_REASON) if reason == "auto" else str(reason)
+
+
 def snapshot_rows(repo: Repo, game_id: str) -> list[SnapshotRow]:
     """Newest first; damaged manifests show as ``unreadable``."""
     rows = []
@@ -154,7 +163,7 @@ def snapshot_rows(repo: Repo, game_id: str) -> list[SnapshotRow]:
             SnapshotRow(
                 snapshot_id=snapshot_id,
                 time=snapshot_time(snapshot_id),
-                reason="" if unreadable else str(summary.get("reason")),
+                reason="" if unreadable else reason_text(summary.get("reason")),
                 status=str(summary["status"]),
                 files="" if unreadable else str(summary["file_count"]),
                 size="" if unreadable else size_text(summary["total_bytes"]),

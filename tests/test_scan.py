@@ -88,9 +88,14 @@ def test_f1_rpy_readable(games_root: Path, saves_root: Path) -> None:
     assert "includes sync/ (engine mirror)" in global_.notes
     # 0.9.0 (D52 1): the readable options.rpyc names the folder; its .rpy is not read
     assert {(e.file, e.method) for e in global_.evidence} == {("game/options.rpyc", "rpyc_define")}
-    assert game.installs == [
+    old_keys = ("game_root", "config_version", "engine_version")
+    assert [{k: i[k] for k in old_keys} for i in game.installs] == [
         {"game_root": str(built.root), "config_version": "1.0", "engine_version": "8.4.1.25072401"}
     ]
+    # 1.2.0 (D73 6, 7, 13): what an install says besides
+    assert game.installs[0]["game_version"] == "1.0"
+    assert game.installs[0]["game_version_source"] == "config.version"
+    assert local.install_root == str(built.root) and global_.install_root is None
 
 
 def test_f2_wrapped_rpyc_only(games_root: Path, saves_root: Path) -> None:

@@ -116,6 +116,8 @@ class RestorePlan:
     target_version: str | None = None  # the version found in game_root
     # 0.8.0 (D48 1): the other games that use the global save directory restored into
     shared_with: list[str] = field(default_factory=list)
+    # 1.2.0 (D73 15): the install whose local saves were chosen among several, if so
+    from_install: str | None = None
 
     @property
     def includes_tokens(self) -> bool:
@@ -133,6 +135,7 @@ class RestorePlan:
             "notes": list(self.notes),
             "shared_with": list(self.shared_with),
             "targets": [t.to_dict() for t in self.targets],
+            "from_install": self.from_install,  # 1.2.0 (D73 15)
         }
 
 
@@ -424,6 +427,39 @@ def check_game_root(
     return root, version, note
 
 
+def pick_local(
+    local: Sequence[dict[str, Any]], manifest: Mapping[str, Any], wanted: Path | None
+) -> tuple[dict[str, Any] | None, str]:
+    """D73 15: the local source of the install ``wanted`` (``--from-install``), else of the
+    snapshot's ``from_install``; ``(None, "")`` when the snapshot does not name one. A
+    ``wanted`` install the snapshot has no local saves of is refused (exit code 2)."""
+    from enginesave.repo import from_install_of
+
+    def of(folder: Path) -> dict[str, Any] | None:
+        found = [s for s in local if (o := _origin_root(s)) is not None and same(o, folder)]
+        return found[0] if len(found) == 1 else None
+
+    def same(a: Path, b: Path) -> bool:
+        return path_key(a) == path_key(b)
+
+    if wanted is not None:
+        folder = Path(os.path.abspath(wanted))
+        pick = of(folder)
+        if pick is None:
+            have = "; ".join(f"{s['source_id']}: {_origin_root(s) or '?'}" for s in local)
+            raise UsageError(
+                f"--from-install {folder}: the snapshot has no local saves of that install "
+                f"(it has {have})"
+            )
+        return pick, "--from-install"
+    recorded = from_install_of(manifest)
+    if recorded is not None:
+        pick = of(Path(recorded["game_root"]))
+        if pick is not None:
+            return pick, "the install the snapshot came from"
+    return None, ""
+
+
 def _snapshot_version(doc: Mapping[str, Any], manifest: Mapping[str, Any]) -> str | None:
     """The game version a snapshot's local saves were made with: the recorded install they
     were backed up from (``None`` when the snapshot names no install, e.g. an anonymous
@@ -496,11 +532,18 @@ def plan_restore(
     saves_root_override: Path | None = None,
     env: Mapping[str, str] | None = None,
     report: ScanReport | None = None,
+    from_install: Path | None = None,
 ) -> RestorePlan:
     """Work out where every selected source would be written. Nothing is written.
 
     ``report`` (a scan with this library) adds installs the record does not list yet to the
     candidates (D39); the window passes its last scan, the command line has none.
+
+    1.2.0 (D73 15): with ``game_root``, a snapshot that holds the local saves of several
+    installs (``local``, ``local-2``...) restores those of ``from_install``, else of the
+    install the snapshot came from (its manifest's ``from_install``); only without either is
+    ``--sources`` needed. ``game_root`` may be any folder of this game -- one the record does
+    not know, a version installed again elsewhere -- and is checked as before.
     """
     env = dict(os.environ) if env is None else env
     record = repo.resolve_game(catalog, game_ref)
@@ -540,11 +583,28 @@ def plan_restore(
     checked = False  # the target's version was read while checking --game-root
     candidates = install_candidates(doc, report)
     install: Path | None = None  # the one install local saves go into
+    picked_from: str | None = None
+    if from_install is not None and explicit is None:
+        raise UsageError("--from-install goes with --game-root (the folder to restore into)")
     if explicit is not None:
+        if len(local) > 1 and (not sources or from_install is not None):
+            # 1.2.0 (D73 15): the local saves of one install -- the one asked for, else the
+            # one the snapshot came from -- go into the folder given
+            pick, how = pick_local(local, manifest, from_install)
+            if pick is not None:
+                chosen = [s for s in chosen if s is pick or all(s is not o for o in local)]
+                local = [pick]
+                origin = _origin_root(pick)
+                picked_from = str(origin) if origin is not None else None
+                notes.append(
+                    f"the snapshot holds the local saves of several installs; restoring "
+                    f"{pick['source_id']} ({picked_from}, {how})"
+                )
         if len(local) > 1:
             ids = ", ".join(s["source_id"] for s in local)
             raise UsageError(
-                f"several game-root sources ({ids}); restore one at a time with --sources"
+                f"several game-root sources ({ids}); restore one at a time with --sources, "
+                "or name the install they come from with --from-install"
             )
         if is_within(explicit, repo.root) or is_within(repo.root, explicit):
             raise UsageError(f"--game-root {explicit} overlaps the backup repository")
@@ -555,6 +615,9 @@ def plan_restore(
         notes += [note] if note else []
         for s in local:
             game_bases[s["source_id"]] = (install, "--game-root")
+        if picked_from is None and len(local) == 1:  # D73 15: where these saves came from
+            origin = _origin_root(local[0])
+            picked_from = str(origin) if origin is not None else None
     elif len(local) == 1:
         if len(candidates) > 1:  # D39: never pick one of several installs by itself
             listed = "; ".join(str(path) for path, _how in candidates)
@@ -578,7 +641,7 @@ def plan_restore(
         if not checked:
             found = find_install(install, saves_root_override=saves_root_override, env=env)
             target_version = found[1] if found is not None else None
-        saved_version = _snapshot_version(doc, manifest)
+        saved_version = _snapshot_version(doc, {"sources": local} if picked_from else manifest)
         note = version_note(saved_version, target_version)
         notes += [note] if note else []
     fallback = install or (candidates[0][0] if candidates else None)
@@ -664,6 +727,7 @@ def plan_restore(
         saved_version,
         target_version,
         shared,
+        picked_from,
     )
 
 

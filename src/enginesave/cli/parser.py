@@ -6,8 +6,10 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import json
 import os
 import sys
+from pathlib import Path
 from typing import Any
 
 from enginesave import __version__
@@ -53,6 +55,20 @@ def _common_options(parser: argparse.ArgumentParser, *, subcommand: bool) -> Non
     )
 
 
+def _unattended_options(parser: argparse.ArgumentParser) -> None:
+    """1.2.0 (D73 8, 9): for a program that runs the command without a console."""
+    parser.add_argument(
+        "--progress",
+        choices=["jsonl"],
+        help="jsonl: one JSON object per line on stderr while it runs (event progress)",
+    )
+    parser.add_argument(
+        "--stop-file",
+        metavar="PATH",
+        help="stop at the next safe point once this file exists, as Ctrl+C (exit code 130)",
+    )
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="enginesave",
@@ -82,11 +98,52 @@ def build_parser() -> argparse.ArgumentParser:
     scan.add_argument(
         "--repo", metavar="DIR", help="recognise games already in this backup repository"
     )
+    _unattended_options(scan)
 
     backup = commands.add_parser("backup", help="copy confirmed save sources into a repository")
     _common_options(backup, subcommand=True)
-    backup.add_argument("roots", nargs="+", metavar="ROOT", help="folders to scan")
+    backup.add_argument(
+        "roots", nargs="*", metavar="ROOT", help="folders to scan (not needed with --game-root)"
+    )
     backup.add_argument("--dest", required=True, metavar="DIR", help="backup repository")
+    backup.add_argument(
+        "--game-root",
+        action="append",
+        metavar="PATH",
+        help="only the game installed in this folder (repeatable): only these folders are "
+        "scanned; each must be a game's own folder",
+    )
+    backup.add_argument(
+        "--skip-unchanged",
+        action="store_true",
+        help="no new snapshot of a game whose saves are exactly its latest snapshot "
+        "(status unchanged)",
+    )
+    backup.add_argument(
+        "--reason",
+        choices=["manual", "auto"],
+        default="manual",
+        help="what the snapshots are recorded as: manual (default) or auto (started by "
+        "another program, e.g. after the game was closed)",
+    )
+    backup.add_argument(
+        "--keep-auto",
+        type=int,
+        metavar="N",
+        help="afterwards keep only the newest N auto snapshots of each game backed up "
+        "(manual, imported and pre_restore snapshots are never removed by this)",
+    )
+    backup.add_argument(
+        "--mirror",
+        action="store_true",
+        help="afterwards mirror the repository to the folder of its last successful mirror",
+    )
+    backup.add_argument(
+        "--auto-mirror",
+        action="store_true",
+        help="like --mirror, when the window's setting 'mirror automatically' is on",
+    )
+    _unattended_options(backup)
     backup.add_argument(
         "--select",
         action="append",
@@ -155,6 +212,12 @@ def build_parser() -> argparse.ArgumentParser:
     restore.add_argument("--game-root", metavar="PATH", help="install folder to restore into")
     restore.add_argument(
         "--sources", metavar="ID[,ID]", help="only these sources (e.g. local,global)"
+    )
+    restore.add_argument(
+        "--from-install",
+        metavar="PATH",
+        help="with --game-root, when the snapshot holds the local saves of several installs: "
+        "those of this install (default: the install the snapshot came from)",
     )
     restore.add_argument("--dry-run", action="store_true", help="show the plan, write nothing")
     restore.add_argument("--yes", action="store_true", help="do not ask for confirmation")
@@ -346,6 +409,11 @@ def build_parser() -> argparse.ArgumentParser:
     migrate.add_argument(
         "--dry-run", action="store_true", help="show the folder names it would give, change nothing"
     )
+
+    about = commands.add_parser(
+        "about", help="this EngineSave's version and the versions of its JSON outputs"
+    )
+    _common_options(about, subcommand=True)
     return parser
 
 
@@ -380,6 +448,10 @@ def load_handler(command: str) -> Handler:
         from enginesave.cli.migrating import cmd_migrate
 
         return cmd_migrate
+    if command == "about":
+        from enginesave.cli.about import cmd_about
+
+        return cmd_about
     if command in ("export", "import"):
         from enginesave.cli import transfer
 
@@ -401,6 +473,45 @@ STOPPABLE = frozenset(
 )  # 0.9.0 (D58): Ctrl+C stops these at a safe point
 # 0.11.0 (D67 8): they write into the library, which must not be of format 1 (not migrated)
 WRITES = frozenset({"backup", "restore", "link", "confirm-source", "cleanup", "import", "remove"})
+# 1.2.0 (D73 4): they take the library's write lock (mirror: the mirror's)
+LOCKED = WRITES | {"migrate", "mirror"}
+
+
+def _lock_target(args: argparse.Namespace) -> tuple[Path, bool] | None:
+    """``(library folder, create it)`` whose write lock the command takes, or ``None``: a
+    command that only reads (``--dry-run``, ``remove`` without ``--yes``), or a folder that is
+    no library yet (the command says what is wrong with it; ``backup`` creates one)."""
+    from enginesave.repo import CATALOG
+
+    if args.command not in LOCKED or getattr(args, "dry_run", False):
+        return None
+    if args.command == "remove" and not args.yes:  # only the preview
+        return None
+    if args.command == "mirror":
+        target = Path(os.path.abspath(args.to))
+        return (target, False) if target.is_dir() else None
+    if args.command == "backup":
+        return Path(os.path.abspath(args.dest)), True
+    root = Path(os.path.abspath(args.repo))
+    return (root, False) if (root / CATALOG).is_file() else None
+
+
+def _write_lock(args: argparse.Namespace) -> contextlib.AbstractContextManager[None]:
+    found = _lock_target(args)
+    if found is None:
+        return contextlib.nullcontext()
+    from enginesave.lock import library_lock
+
+    root, create = found
+    return library_lock(root, f"enginesave {args.command}", create=create)
+
+
+def _busy(args: argparse.Namespace, exc: Any) -> int:
+    """D73 4: exit code 4; with ``--json`` the holder on stdout."""
+    print(f"error: {exc}; try again later", file=sys.stderr)
+    if getattr(args, "json", False):
+        print(json.dumps({"error": "library_busy", "holder": exc.holder}, indent=2))
+    return exc.exit_code
 
 
 def _check_overrides(args: argparse.Namespace) -> None:
@@ -451,6 +562,8 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     configure_output(args.verbose)
     stops = ctrl_c_stops() if args.command in STOPPABLE else contextlib.nullcontext()
+    from enginesave.lock import LibraryBusy
+
     try:
         overrides = [
             *(getattr(args, "root_override", None) or []),
@@ -459,10 +572,13 @@ def main(argv: list[str] | None = None) -> int:
         with stops, overriding(overrides):  # 0.10.0 (D65 1)
             _check_overrides(args)
             _check_layout(args)
-            return load_handler(args.command)(args)
+            with _write_lock(args):  # 1.2.0 (D73 4)
+                return load_handler(args.command)(args)
     except Stopped:  # stopped before there was anything to report (a scan)
         print(f"error: {STOPPED_NOTE}", file=sys.stderr)
         return STOPPED_EXIT_CODE
+    except LibraryBusy as exc:
+        return _busy(args, exc)
     except EngineSaveError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return exc.exit_code

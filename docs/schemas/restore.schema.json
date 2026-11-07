@@ -58,7 +58,7 @@
         "game_id": { "type": "string" },
         "display_name": { "type": "string" },
         "snapshot_id": { "type": "string" },
-        "snapshot_reason": { "enum": ["manual", "pre_restore", "import"] },
+        "snapshot_reason": { "enum": ["manual", "pre_restore", "import", "auto"], "description": "1.2.0 (D73 3): auto, a backup another program started" },
         "snapshot_status": { "enum": ["complete", "partial"] },
         "game_root": {
           "type": ["string", "null"],
@@ -74,7 +74,11 @@
           "items": { "type": "string" },
           "description": "0.8.0 (D48): the other games, name (version), whose saves share the global save directory restored into"
         },
-        "targets": { "type": "array", "items": { "$ref": "#/$defs/target" } }
+        "targets": { "type": "array", "items": { "$ref": "#/$defs/target" } },
+        "from_install": {
+          "type": ["string", "null"],
+          "description": "1.2.0 (D73 15): with --game-root, the install folder the restored local saves were backed up from (chosen by --from-install, or the snapshot's from_install, when it holds several installs' local saves); null when no single local source is restored"
+        }
       }
     },
     "failure": {

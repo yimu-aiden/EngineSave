@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING, Any
 
 from enginesave.errors import EngineSaveError
 from enginesave.gui import state
-from enginesave.gui.app import set_enabled
+from enginesave.gui.app import locked_job, set_enabled
 from enginesave.gui.i18n import _
 from enginesave.gui.views.dialogs.base import PAD, WARNING_COLOR, Dialog, scrolled_tree
 from enginesave.repo import Repo
@@ -128,6 +128,7 @@ class TmpDialog(Dialog):
             self.deleted,
             status=_("正在删除临时文件夹…"),
             cancellable=True,
+            lock=repo.root,  # D73 4
         )
 
     def deleted(self, result: TmpRemoval) -> None:
@@ -257,15 +258,21 @@ class MirrorDialog(Dialog):
             from enginesave.mirror import forbidden_places, mirror_repo
 
             places = forbidden_places(repo, saves_root=override, env=env, also=roots)
-            return mirror_repo(
-                repo,
-                target,
-                forbidden=places,
-                verify=verify,
-                repair=repair,
-                progress=lambda done, total, name: progress((done, total, name)),
-                should_stop=stop,
-            )
+
+            def write(_p: Callable[[Any], None]) -> MirrorResult:
+                return mirror_repo(
+                    repo,
+                    target,
+                    forbidden=places,
+                    verify=verify,
+                    repair=repair,
+                    progress=lambda done, total, name: progress((done, total, name)),
+                    should_stop=stop,
+                )
+
+            if not target.is_dir():  # a new mirror: nothing else can be writing it yet
+                return write(progress)
+            return locked_job(write, target, _("镜像"))(progress)  # D73 4
 
         log.info(_("开始镜像：%s → %s"), repo.root, target)
         self.run(
@@ -363,6 +370,7 @@ class MigrateDialog(Dialog):
             status=_("正在迁移备份库…"),
             progress=self.progress,
             cancellable=True,
+            lock=repo.root,  # D73 4
         )
 
     def progress(self, value: tuple[int, int, str]) -> None:

@@ -866,3 +866,40 @@ def test_parse_size() -> None:
     for bad in ("", "lots", "-1", "0"):
         with pytest.raises(UsageError):
             parse_size(bad)
+
+
+def test_a_program_checks_then_cleans_up_an_old_version_without_a_console(
+    library: Library,
+    saves_root: Path,
+    synthetic_bin,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """1.2.0 (D73): how a program removes an old version -- ``--dry-run --json`` for the
+    complete checks (exit 2 when one fails, nothing deleted), then ``--yes --json`` with no
+    console: recycled, and the full-bin choice is ``stop`` by default (D41)."""
+    from test_schemas import conforms
+
+    repo, _, built = library
+    monkeypatch.setattr("sys.stdin", io.StringIO(""))  # not a console
+    base = ["cleanup", "--repo", str(repo.root), "--game", "readable game"]
+    base += ["--renpy-saves-root", str(saves_root), "--game-root", str(built.root), "--json"]
+    (built.local_dir / "9-9-LT9.save").write_bytes(b"not backed up")
+    code, out, _ = run([*base, "--dry-run"], capsys)
+    data = json.loads(out)
+    assert code == 2 and data["dry_run"] is True and data["result"] is None
+    (target,) = data["plan"]["targets"]
+    assert target["ok"] is False and any("not in the backup" in r for r in target["reasons"])
+    conforms("cleanup", data)
+    (built.local_dir / "9-9-LT9.save").unlink()
+    code, out, _ = run([*base, "--dry-run"], capsys)
+    assert code == 0 and json.loads(out)["plan"]["targets"][0]["ok"] is True
+    assert built.root.is_dir()
+    code, out, _ = run([*base, "--yes"], capsys)
+    data = json.loads(out)
+    assert code == 0 and not built.root.exists()
+    assert data["result"]["targets"][0]["result"] == "recycled"
+    assert len(synthetic_bin.pairs()) == 1
+    conforms("cleanup", data)
+    record = repo.load_game(repo.load_catalog()["games"][0]["game_id"])
+    assert record["installs"][0]["removed_at"], "the record remembers the version is gone"

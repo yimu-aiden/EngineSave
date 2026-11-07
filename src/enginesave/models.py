@@ -161,6 +161,8 @@ class SaveSource(JsonModel):
     patterns: list[str] = field(default_factory=list)
     # 0.10.0: names directly in the folder that are left out (a log, a cache folder)
     excludes: list[str] = field(default_factory=list)
+    # 1.2.0 (D73 13): the install folder a local source is in; null for any other source
+    install_root: str | None = None
 
     OPTIONAL_FIELDS: ClassVar[tuple[str, ...]] = ("patterns", "excludes")
 

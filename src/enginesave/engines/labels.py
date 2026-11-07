@@ -18,6 +18,7 @@ ENGINE_LABELS = {
     "electron": "Electron",
     "nwjs": "NW.js",
     "emuera": "Emuera",  # 0.9.0 (D52 4): Era games; the ERB scripts are never read
+    "html": "HTML",  # 1.2.0 (D73 12): Twine and other games that are a web page
 }
 
 

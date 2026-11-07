@@ -7,7 +7,7 @@ import heapq
 import logging
 import os
 import time
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path, PureWindowsPath
 
@@ -82,9 +82,11 @@ def discover(
     max_depth: int = DEFAULT_MAX_DEPTH,
     excludes: Sequence[str] = (),
     should_stop: StopCheck = None,
+    progress: Callable[[int, str], None] | None = None,
 ) -> DiscoveryResult:
     """Depth-first walk; a directory recognised by a detector is not descended into.
-    ``should_stop`` is asked before each folder (D58) and raises :class:`Stopped`."""
+    ``should_stop`` is asked before each folder (D58) and raises :class:`Stopped`;
+    ``progress(folders so far, folder)`` is told before each folder is looked at (D73 8)."""
     result = DiscoveryResult()
     visited: set[str] = set()
     slow: list[tuple[float, str]] = []  # a min-heap of the slowest folders
@@ -113,6 +115,10 @@ def discover(
                 skip(directory, detection.skipped_reason)
             if detection.game is not None:
                 result.games.append(detection.game)
+                # 1.2.0 (D73 6): the game folder's listing, for its launch candidates later
+                memo = ctx.memo.get("folder")
+                if memo is not None and memo[0] == str(directory) and memo[1] is not None:
+                    ctx.memo.setdefault("listings", {})[path_key(directory)] = memo[1]
             return []
         try:
             with os.scandir(long_path(directory)) as it:
@@ -159,6 +165,8 @@ def discover(
             if key in visited:
                 continue
             visited.add(key)
+            if progress is not None:
+                progress(len(visited), str(directory))
             began = time.perf_counter()
             children = visit(directory, depth)
             took = time.perf_counter() - began

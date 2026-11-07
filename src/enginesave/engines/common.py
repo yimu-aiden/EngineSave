@@ -246,6 +246,25 @@ def text_value(value: Any) -> str | None:
     return None
 
 
+# 1.2.0 (D73 7): versions a tool fills in when nobody chose one (npm init, electron-forge, vue)
+DEFAULT_VERSIONS = frozenset({"0.0.0", "0.0.1", "0.1.0", "1.0.0"})
+MAX_VERSION_LENGTH = 64
+
+
+def plain_version(value: Any) -> str | None:
+    """A version as a file states it; ``None`` for nothing, a tool's default or junk."""
+    text = text_value(value)
+    if text is None or len(text) > MAX_VERSION_LENGTH or any(ord(c) < 32 for c in text):
+        return None
+    return None if text in DEFAULT_VERSIONS else text
+
+
+def package_version(package: Any, where: str) -> tuple[str, str] | None:
+    """``(version, where)`` of a ``package.json`` (Electron, NW.js) that states one."""
+    version = plain_version(package.get("version")) if isinstance(package, dict) else None
+    return (version, f"{where} version") if version else None
+
+
 def rule_source(
     source_id: str,
     kind: SourceKind,
@@ -380,9 +399,11 @@ def rule_game(
     product: str | None = None,
     project: str | None = None,
     unsupported: bool = False,
+    game_version: tuple[str, str] | None = None,
 ) -> DetectedGame:
     """A game of a rule engine: its metadata is what the rules read (``RESOLVED``), its
-    status follows from its sources (6.4, D65 5)."""
+    status follows from its sources (6.4, D65 5). ``game_version`` is ``(version, where it was
+    read)`` when a file of the game states it (1.2.0, D73 7)."""
     exes = sorted(
         (p.stem for p in directory.glob("*.exe") if not is_helper_exe(p.stem)),
         key=str.casefold,
@@ -412,7 +433,13 @@ def rule_game(
         evidence=list(evidence),
         warnings=list(warnings),
         installs=[
-            {"game_root": str(directory), "config_version": None, "engine_version": engine_version}
+            {
+                "game_root": str(directory),
+                "config_version": None,
+                "engine_version": engine_version,
+                "game_version": game_version[0] if game_version else None,
+                "game_version_source": game_version[1] if game_version else None,
+            }
         ],
     )
     game.status = game_status(game)

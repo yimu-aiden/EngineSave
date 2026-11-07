@@ -6,7 +6,14 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from enginesave.engines.base import DetectionResult, Detector, ScanContext
-from enginesave.engines.common import Listing, list_folder, looked_at
+from enginesave.engines.common import (
+    Listing,
+    list_folder,
+    looked_at,
+    package_version,
+    read_head,
+    read_json,
+)
 from enginesave.engines.labels import ENGINE_LABELS, engine_label  # noqa: F401 - re-exported
 from enginesave.engines.renpy.structure import read_small_text
 from enginesave.engines.rpgmaker_mv import CORES, base_folder
@@ -99,7 +106,66 @@ def fingerprint(directory: Path, listing: Listing | None = None) -> Fingerprint 
     for lower in sorted(files):
         if lower.endswith(".xp3"):
             return Fingerprint("kirikiri", files[lower])
+    # 1.2.0 (D73 12): a game that is a web page (Twine and the like): no program at all
+    if not any(n.endswith(".exe") for n in files) and any(n.endswith(HTML_SUFFIXES) for n in files):
+        entries = html_entries(directory, listing)
+        if entries:
+            return Fingerprint("html", entries[0][0])
     return None
+
+
+HTML_SUFFIXES = (".html", ".htm")
+HTML_HEAD = 256 * 1024  # a Twine page names its story format in its first lines
+HTML_TRIED = 4  # pages looked into, the largest first
+# what a Twine story's page carries (Twine 1 and 2 and their story formats)
+TWINE_MARKERS = (
+    b"tw-storydata", b"tw-passagedata", b'id="storearea"', b'id="store-area"', b"sugarcube",
+    b"harlowe", b"snowman", b"chapbook", b"twine",
+)  # fmt: skip
+# what a page that runs a game in the browser carries besides its scripts (a canvas, a web game
+# engine); a manual or a web app's page has scripts and an image folder too, never these
+WEB_GAME_MARKERS = (
+    b"<canvas", b"phaser", b"pixi", b"rpg_core.js", b"rmmz_core.js", b"tyrano",
+    b"unityloader", b"createunityinstance", b"createjs", b"c3runtime", b"godot",
+)  # fmt: skip
+
+
+def _links_folder(head: bytes, dirs: dict[str, str]) -> str | None:
+    """A folder beside the page that the page loads files from (``src="img/..."``)."""
+    for lower in sorted(dirs):
+        name = lower.encode("utf-8", "replace")
+        if any(f"{q}".encode() + name + b"/" in head for q in ('"', "'", "(", "=")):
+            return dirs[lower]
+    return None
+
+
+def html_entries(directory: Path, listing: Listing) -> list[tuple[str, str]]:
+    """``[(page, why)]``: the pages that start an HTML game, Twine story pages first, then
+    pages of a web game engine (a canvas, Phaser, PixiJS, RPG Maker's or TyranoScript's
+    scripts...) that load a folder beside them; the largest pages are looked at."""
+
+    def size(name: str) -> int:
+        try:
+            return (directory / name).stat().st_size
+        except OSError:
+            return 0
+
+    pages = [n for lower, n in listing.files.items() if lower.endswith(HTML_SUFFIXES)]
+    pages.sort(key=lambda n: (-size(n), n.casefold()))
+    twine: list[tuple[str, str]] = []
+    linked: list[tuple[str, str]] = []
+    for name in pages[:HTML_TRIED]:
+        head = (read_head(directory / name, HTML_HEAD) or b"").lower()
+        marker = next((m for m in TWINE_MARKERS if m in head), None)
+        if marker is not None:
+            twine.append((name, f"Twine story page ({marker.decode()})"))
+        elif (
+            b"<script" in head
+            and (engine := next((m for m in WEB_GAME_MARKERS if m in head), None))
+            and (folder := _links_folder(head, listing.dirs))
+        ):
+            linked.append((name, f"web game page ({engine.decode()}, loads {folder})"))
+    return twine + linked
 
 
 def _wolf_data(directory: Path, files: dict[str, str], dirs: dict[str, str]) -> str | None:
@@ -139,6 +205,16 @@ class FingerprintDetector(Detector):
             return None
         label = ENGINE_LABELS[found.engine]
         exe = next((p.stem for p in sorted(directory.glob("*.exe"))), None)
+        warning = f"{label} is not supported: engine identified only, saves not located"
+        if found.engine == "html":  # D73 12: its saves are the browser's, not files
+            warning = (
+                "an HTML game: the browser it runs in keeps its saves (not files EngineSave "
+                "can back up); engine identified only"
+            )
+        version = None
+        if found.engine == "nwjs" and _listing is not None and _listing.file("package.json"):
+            name = str(_listing.file("package.json"))
+            version = package_version(read_json(directory / name), name)  # D73 7
         game = DetectedGame(
             game_root=str(directory),
             engine=found.engine,
@@ -148,6 +224,15 @@ class FingerprintDetector(Detector):
             metadata_state=MetadataState.MISSING,
             status=GameStatus.UNSUPPORTED,
             evidence=[Evidence(found.marker, "engine_fingerprint", f"{label} marker")],
-            warnings=[f"{label} is not supported: engine identified only, saves not located"],
+            warnings=[warning],
+            installs=[  # D73 13: one install, as every game has
+                {
+                    "game_root": str(directory),
+                    "config_version": None,
+                    "engine_version": None,
+                    "game_version": version[0] if version else None,
+                    "game_version_source": version[1] if version else None,
+                }
+            ],
         )
         return DetectionResult(game=game)

@@ -216,6 +216,7 @@ class ImportDialog(Dialog):
             status=_("正在导入…"),
             progress=self.step_progress,
             cancellable=True,
+            lock=Path(repo_root),  # D73 4
         )
 
     def step_progress(self, value: tuple[int, int, str]) -> None:

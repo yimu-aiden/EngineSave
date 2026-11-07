@@ -85,7 +85,8 @@
         "file_count",
         "total_bytes",
         "mirror_of",
-        "notes"
+        "notes",
+        "install_root"
       ],
       "properties": {
         "source_id": { "type": "string" },
@@ -102,7 +103,8 @@
         "mirror_of": { "type": "array", "items": { "type": "string" } },
         "notes": { "type": "array", "items": { "type": "string" } },
         "patterns": { "type": "array", "items": { "type": "string" }, "description": "0.10.0 (D65 2): only the files directly in the folder whose names match these patterns (case-insensitive); empty means the whole folder" },
-        "excludes": { "type": "array", "items": { "type": "string" }, "description": "0.10.0: names directly in the folder that are left out, with everything below them (a log, a cache folder)" }
+        "excludes": { "type": "array", "items": { "type": "string" }, "description": "0.10.0: names directly in the folder that are left out, with everything below them (a log, a cache folder)" },
+        "install_root": { "type": ["string", "null"], "description": "1.2.0 (D73 13): for a local source, the install folder (one of the game's installs) it is in; null for global, registry and other sources" }
       }
     },
     "identity": {
@@ -133,11 +135,28 @@
     "install": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["game_root", "config_version", "engine_version"],
+      "description": "1.2.0 (D73 13): every game has at least one install (its game_root); a Ren'Py game grouped from several folders (D9) has one per folder",
+      "required": ["game_root", "config_version", "engine_version", "game_version", "game_version_source", "launch_candidates"],
       "properties": {
         "game_root": { "type": "string" },
         "config_version": { "type": ["string", "null"] },
-        "engine_version": { "type": ["string", "null"] }
+        "engine_version": { "type": ["string", "null"] },
+        "game_version": { "type": ["string", "null"], "description": "1.2.0 (D73 7): the game's version where a file of this install states it (Ren'Py config.version; Electron and NW.js package.json version, not tool defaults such as 0.0.0 or 1.0.0; Unity bundleVersion when it can be read); never taken from a folder name" },
+        "game_version_source": { "type": ["string", "null"], "description": "where game_version was read; null when game_version is null" },
+        "launch_candidates": {
+          "type": "array",
+          "description": "1.2.0 (D73 6): programs that start this install, most likely first; helper programs (crash handlers, uninstallers, setups, redistributables) are never listed",
+          "items": { "$ref": "#/$defs/launch_candidate" }
+        }
+      }
+    },
+    "launch_candidate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "reason"],
+      "properties": {
+        "path": { "type": "string", "description": "relative to the install folder, '/' between folders" },
+        "reason": { "type": "string" }
       }
     },
     "suggestion": {
@@ -176,7 +195,7 @@
       ],
       "properties": {
         "game_root": { "type": "string" },
-        "engine": { "type": "string", "description": "renpy, or a fingerprinted engine such as unity, electron or nwjs" },
+        "engine": { "type": "string", "description": "renpy, or a fingerprinted engine such as unity, electron or nwjs (1.2.0, D73 12: html for a game that is a web page, always UNSUPPORTED)" },
         "engine_version": { "type": ["string", "null"] },
         "display_name": { "type": "string" },
         "identity": { "$ref": "#/$defs/identity" },

@@ -370,6 +370,7 @@ class CleanupDialog(Dialog):
             status=_("正在清理…"),
             progress=self.cleanup_progress,
             cancellable=True,
+            lock=self.repo.root,  # D73 4
         )
 
     def cleanup_progress(self, value: tuple[int, int, str]) -> None:
@@ -480,6 +481,7 @@ class CleanupDialog(Dialog):
             status=_("正在继续清理…"),
             progress=self.cleanup_progress,
             cancellable=True,
+            lock=self.repo.root,  # D73 4
         )
 
     def resumed(

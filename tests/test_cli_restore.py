@@ -159,3 +159,26 @@ def test_confirm_source_cli(games_root: Path, saves_root: Path, tmp_path: Path, 
     assert (source["source_id"], source["status"]) == ("global", "USER_CONFIRMED")
     code, _, err = run([*confirm, "../x", "--path", str(built.global_dir)], capsys)
     assert code == 2 and "--source-id" in err
+
+
+def test_a_program_links_another_version_folder_without_a_console(
+    backed_up, tmp_path: Path, capsys, monkeypatch
+) -> None:
+    """1.2.0 (D73): how a program links a version folder to an EngineSave record after the
+    user agreed -- ``link --json`` with no console; scans with the library then know it."""
+    built, repo, common = backed_up
+    monkeypatch.setattr("sys.stdin", io.StringIO(""))
+    game_id = json.loads(run(["list", "--repo", str(repo), "--json"], capsys)[1])["games"][0][
+        "game_id"
+    ]
+    other = reinstall_copy(built.root, tmp_path / "versions" / "Readable Game 1.1")
+    code, out, _ = run(
+        ["link", "--repo", str(repo), "--game", game_id, "--game-root", str(other), "--json"],
+        capsys,
+    )
+    data = json.loads(out)
+    assert code == 0 and data["type"] == "link_root" and data["game_id"] == game_id
+    assert data["game_root"] == str(other)
+    code, out, _ = run(["scan", str(other.parent), *common, "--repo", str(repo), "--json"], capsys)
+    (game,) = json.loads(out)["games"]
+    assert game["known_game_id"] == game_id

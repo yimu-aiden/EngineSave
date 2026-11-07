@@ -11,14 +11,58 @@ from typing import Any
 from enginesave.appdirs import config_dir
 from enginesave.backup import register_game
 from enginesave.cli.common import STOPPED_NOTE, emit, override_from, should_stop
-from enginesave.errors import STOPPED_EXIT_CODE, Stopped, UsageError
+from enginesave.errors import STOPPED_EXIT_CODE, EngineSaveError, Stopped, UsageError
 from enginesave.fsutil import path_key
 from enginesave.linking import confirm_source, game_at, link_root
 from enginesave.mirror import last_mirror
 from enginesave.removal import library_stats
-from enginesave.repo import Repo, install_present
+from enginesave.repo import Repo, from_install_of, install_present
 from enginesave.report import render_list, render_show_game, render_show_snapshot, render_verify
 from enginesave.verify import verify_objects, verify_repo
+
+
+def latest_facts(repo: Repo, game_id: str, snapshot_id: str | None) -> dict[str, Any]:
+    """1.2.0 (D73 5, 14): when the latest snapshot (of any reason) was made, why, and the
+    install it came from; all ``None`` without one or when its manifest cannot be read."""
+    facts: dict[str, Any] = {
+        "latest_snapshot_at": None,
+        "latest_reason": None,
+        "latest_from_install": None,
+    }
+    if snapshot_id is None:
+        return facts
+    facts["latest_snapshot_at"] = repo.snapshot_created(game_id, snapshot_id)
+    try:
+        manifest = repo.load_manifest(game_id, snapshot_id)
+    except EngineSaveError:
+        return facts
+    reason = manifest.get("reason")
+    facts["latest_reason"] = reason if isinstance(reason, str) else None
+    facts["latest_from_install"] = from_install_of(manifest)
+    return facts
+
+
+def record_installs(doc: dict[str, Any]) -> list[dict[str, Any]]:
+    """D73 5: the install folders a record knows, newest seen first, with the game version
+    read there and whether the folder is on disk now (an install cleaned up or deleted stays
+    listed: the record remembers where the game was)."""
+    found = []
+    installs = [i for i in doc.get("installs") or [] if isinstance(i, dict) and i.get("game_root")]
+    installs.sort(key=lambda i: str(i.get("last_seen") or ""), reverse=True)
+    for install in installs:
+        root = Path(str(install["game_root"]))
+        version = install.get("game_version") or install.get("config_version")
+        found.append(
+            {
+                "game_root": str(root),
+                "game_version": version if isinstance(version, str) else None,
+                "present": root.is_absolute() and root.is_dir(),
+                "first_seen": install.get("first_seen"),
+                "last_seen": install.get("last_seen"),
+                "removed_at": install.get("removed_at"),
+            }
+        )
+    return found
 
 
 def cmd_list(args: argparse.Namespace) -> int:
@@ -38,7 +82,10 @@ def cmd_list(args: argparse.Namespace) -> int:
         }
         if record.get("cleaned_at"):  # only after a cleanup (D26): older output is unchanged
             row["cleaned_at"] = record["cleaned_at"]
-        row["install_present"] = install_present(repo.load_game(record["game_id"]))  # D43
+        doc = repo.load_game(record["game_id"])
+        row["install_present"] = install_present(doc)  # D43
+        row.update(latest_facts(repo, record["game_id"], ids[-1] if ids else None))  # D73 5
+        row["installs"] = record_installs(doc)
         rows.append(row)
     mirrored = last_mirror(config_dir(), repo.root)
     stats = library_stats(repo, last_mirror=mirrored["at"] if mirrored else None)
@@ -47,7 +94,8 @@ def cmd_list(args: argparse.Namespace) -> int:
         "games": rows,
         "stale_tmp_dirs": [str(p) for p in repo.stale_tmp_dirs()],
         "orphan_record_dirs": [str(p) for p in repo.orphan_game_dirs()],  # 0.8.0 (D49)
-        "stats": stats.to_dict(),  # 0.9.0 (D56)
+        # 0.9.0 (D56); 1.2.0 (D73 16): where it was last mirrored to
+        "stats": stats.to_dict() | {"mirror_folder": mirrored["to"] if mirrored else None},
     }
     emit(args, render_list(data), data)
     return 0

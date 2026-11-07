@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "enginesave/list.schema.json",
   "title": "enginesave list --json",
-  "description": "Output of `enginesave list --repo DIR --json`. cleaned_at appears only after a cleanup (0.4.0), install_present since 0.7.0, orphan_record_dirs since 0.8.0, stats since 0.9.0 (D56).",
+  "description": "Output of `enginesave list --repo DIR --json`. cleaned_at appears only after a cleanup (0.4.0), install_present since 0.7.0, orphan_record_dirs since 0.8.0, stats since 0.9.0 (D56); latest_snapshot_at, latest_reason, latest_from_install, installs and stats.mirror_folder since 1.2.0 (D73).",
   "type": "object",
   "additionalProperties": false,
   "required": ["repository", "games", "stale_tmp_dirs", "orphan_record_dirs", "stats"],
@@ -36,7 +36,41 @@
         "snapshot_count": { "type": "integer" },
         "latest_snapshot": { "type": ["string", "null"] },
         "cleaned_at": { "type": "string" },
-        "install_present": { "type": "boolean" }
+        "install_present": { "type": "boolean" },
+        "latest_snapshot_at": { "type": ["string", "null"], "description": "1.2.0 (D73 5): when latest_snapshot (the newest of any reason) was made, ISO-8601 UTC" },
+        "latest_reason": { "type": ["string", "null"], "description": "1.2.0 (D73 5): manual, auto, import or pre_restore; null without snapshots or when its manifest cannot be read" },
+        "latest_from_install": {
+          "type": ["object", "null"],
+          "$ref": "#/$defs/from_install",
+          "description": "1.2.0 (D73 14): the install latest_snapshot was backed up from, when it says"
+        },
+        "installs": {
+          "type": "array",
+          "description": "1.2.0 (D73 5): every install folder the record knows, the most recently seen first; one that is gone stays listed (present false)",
+          "items": { "$ref": "#/$defs/install" }
+        }
+      }
+    },
+    "from_install": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["game_root", "game_version"],
+      "properties": {
+        "game_root": { "type": "string" },
+        "game_version": { "type": ["string", "null"] }
+      }
+    },
+    "install": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["game_root", "game_version", "present", "first_seen", "last_seen", "removed_at"],
+      "properties": {
+        "game_root": { "type": "string" },
+        "game_version": { "type": ["string", "null"], "description": "the game version last read there (Ren'Py config.version, a package.json version...)" },
+        "present": { "type": "boolean", "description": "the folder is on disk now" },
+        "first_seen": { "type": ["string", "null"] },
+        "last_seen": { "type": ["string", "null"] },
+        "removed_at": { "type": ["string", "null"], "description": "when a cleanup removed it (D26)" }
       }
     },
     "stats": {
@@ -49,7 +83,8 @@
         "stored_bytes": { "type": "integer", "description": "objects, plain copies, manifests and record files" },
         "logical_bytes": { "type": "integer", "description": "every snapshot's files as if each were stored on its own" },
         "last_backup": { "type": ["string", "null"], "description": "the newest manual or imported snapshot's time (0.10.0; before: the newest of any kind), ISO-8601 UTC" },
-        "last_mirror": { "type": ["string", "null"], "description": "when this repository was last mirrored on this computer (mirrors.json beside gui.json)" }
+        "last_mirror": { "type": ["string", "null"], "description": "when this repository was last mirrored on this computer (mirrors.json beside gui.json)" },
+        "mirror_folder": { "type": ["string", "null"], "description": "1.2.0 (D73 16): where that mirror is (backup --mirror mirrors there); null when it was never mirrored on this computer" }
       }
     }
   }

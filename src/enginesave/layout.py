@@ -53,8 +53,10 @@ PROFILE_PLACES = {  # how a profile folder is written when this computer cannot 
     roots.SAVED_GAMES: "%USERPROFILE%\\Saved Games",
     roots.VIRTUALSTORE: "%LOCALAPPDATA%\\VirtualStore",
 }
+# auto: 1.2.0 (D73 3), a backup another program started (after the game was closed)
 REASONS = {"manual": ("手动备份", "a backup"), "import": ("导入", "an import"),
-           "pre_restore": ("恢复前的安全快照", "the safety snapshot before a restore")}  # fmt: skip
+           "pre_restore": ("恢复前的安全快照", "the safety snapshot before a restore"),
+           "auto": ("自动", "an automatic backup")}  # fmt: skip
 STATUSES = {"complete": ("完整", "complete"), "partial": ("不完整", "partial")}
 
 
