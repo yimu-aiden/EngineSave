@@ -43,6 +43,7 @@
     "cancelled": { "const": true, "description": "0.9.0 (D58): only when it was stopped while copying" },
     "verify_stopped": { "const": true, "description": "0.10.0 (D59): only when it was stopped while verifying; the mirror itself is complete" },
     "objects_recopied": { "type": "integer", "description": "0.10.0 (D59): objects found damaged in the mirror (by the check afterwards, or by --repair) and copied again" },
-    "files_replaced": { "type": "integer", "description": "0.10.0 (D59): snapshot files of the mirror that were missing or did not match their manifest, placed again" }
+    "files_replaced": { "type": "integer", "description": "0.10.0 (D59): snapshot files of the mirror that were missing or did not match their manifest, placed again" },
+    "attachments_copied": { "type": "integer", "description": "1.3.0 (D76): files of the records' 附件 folders copied (new, or another size or time); nothing in the mirror's is deleted" }
   }
 }

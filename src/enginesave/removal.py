@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import Any
 
 from enginesave import layout
+from enginesave.attachments import listing as attachment_listing
 from enginesave.errors import EngineSaveError, FatalError, StopCheck, UsageError
 from enginesave.fsutil import long_path
 from enginesave.repo import (
@@ -214,6 +215,8 @@ class RemoveItem:
     installed: bool  # one of its game folders is on disk now (D43)
     # 1.0.0 (D72 R06): every snapshot the record had when this was previewed
     existing: list[str] = field(default_factory=list)
+    # 1.3.0 (D76): the record's 附件 ({"folder", "file_count", "total_bytes"}), when it has some
+    attachments: dict[str, Any] | None = None
 
     @property
     def whole(self) -> bool:
@@ -230,6 +233,7 @@ class RemoveItem:
             "files": self.files,
             "bytes": self.bytes,
             "install_present": self.installed,
+            "attachments": self.attachments,  # 1.3.0 (D76)
         }
 
 
@@ -239,6 +243,8 @@ class RemovePlan:
     items: list[RemoveItem]
     freed_bytes: int  # about; objects only when they will be collected
     gc_blocked: str | None  # why the object store will not be collected
+    # 1.3.0 (D76): a whole record's 附件 go too (kept otherwise)
+    with_attachments: bool = False
 
     @property
     def records(self) -> int:
@@ -262,6 +268,7 @@ class RemovePlan:
             "freed_bytes": self.freed_bytes,
             "gc_blocked": self.gc_blocked,
             "games_not_installed": len(self.gone),
+            "with_attachments": self.with_attachments,  # 1.3.0 (D76)
         }
 
 
@@ -270,9 +277,12 @@ def plan_remove(
     catalog: dict[str, Any],
     requests: Sequence[tuple[str, Sequence[str] | None]],
     found: Inventory | None = None,
+    *,
+    with_attachments: bool = False,
 ) -> RemovePlan:
     """What removing ``(game reference, snapshot ids or None for all)`` would do. Nothing is
-    written. Unknown records or snapshots are refused (UsageError)."""
+    written. Unknown records or snapshots are refused (UsageError). 1.3.0 (D76): a whole
+    record's 附件 stay unless ``with_attachments``."""
     found = inventory(repo) if found is None else found
     items: dict[str, RemoveItem] = {}
     for ref, wanted in requests:
@@ -305,8 +315,20 @@ def plan_remove(
             installed,
             list(existing),
         )
+        try:
+            held = attachment_listing(game_id, repo.game_dir(game_id))
+        except FatalError:
+            held = None
+        if held is not None and held.exists and (held.entries or held.file_count):
+            items[game_id].attachments = {
+                "folder": str(held.folder),
+                "file_count": held.file_count,
+                "total_bytes": held.total_bytes,
+            }
     doomed = [(item.game_id, s) for item in items.values() for s in item.snapshot_ids]
-    return RemovePlan(repo, list(items.values()), found.freed(doomed), found.blocked)
+    plan = RemovePlan(repo, list(items.values()), found.freed(doomed), found.blocked)
+    plan.with_attachments = with_attachments
+    return plan
 
 
 # ------------------------------------------------------------------------------- execute
@@ -381,7 +403,9 @@ def execute_remove(
             continue
         if item.whole:
             result.freed_bytes += sum(freed(item.game_id, s) for s in item.snapshot_ids)
-            result.leftovers += repo.remove_game(item.game_id)
+            result.leftovers += repo.remove_game(
+                item.game_id, with_attachments=plan.with_attachments
+            )
             result.records += 1
             result.snapshots += len(item.snapshot_ids)
             continue

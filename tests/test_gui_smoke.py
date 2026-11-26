@@ -297,7 +297,7 @@ def test_window_scan_backup_verify_restore_export(
     assert app.scan_view.guide.winfo_manager() == "pack"
     guide = app.scan_view.guide_var.get()
     assert guide.startswith("首次使用，按这六步来：") and "→ 1." in guide
-    assert "5. 点「备份已勾选项」" in guide and "6." in guide
+    assert "5. 点「备份…」" in guide and "6." in guide
 
     # empty states
     app.scan()
@@ -334,7 +334,7 @@ def test_window_scan_backup_verify_restore_export(
     wait(app)
     assert (tmp_path / "library" / "catalog.json").is_file()
     assert app.scan_view.guide_var.get() == (
-        "已勾选 1 款游戏，点击「备份已勾选项」直接开始，或「预览…」先看将复制的内容。"
+        "已勾选 1 款游戏，点「备份…」看要复制的内容，再点「备份」开始。"
     ), "after a scan the banner says what is ticked"
     toggle = app.scan_view.toggle_button
     assert toggle.cget("text") == "全选", "some rows ticked: the one button ticks them all"
@@ -350,11 +350,11 @@ def test_window_scan_backup_verify_restore_export(
     assert orphans is not None and len(tree_rows(orphans.tree)) == 2
     assert orphans.count.get() == "已勾选 0 个孤立目录，连同扫描页勾选的 1 款游戏一起备份"
     orphans.toggle("u1")  # none ticked by default
-    assert orphans.backup_button.cget("text") == "备份已勾选项", "the scan page's name (D47)"
+    assert orphans.backup_button.cget("text") == "备份…", "the scan page's name (D47)"
     assert app.scan_view.counts.get() == "已勾选 1 款游戏、1 个孤立目录", "S-131"
     orphans.cancel()  # the tick stays and goes with the games
 
-    app.preview_backup()  # 「预览…」 still shows the plan first
+    app.preview_backup()  # 1.3.0: 「备份…」 shows the plan first
     wait(app)
     preview = app.last_dialog
     assert isinstance(preview, BackupPreviewDialog)
@@ -364,15 +364,16 @@ def test_window_scan_backup_verify_restore_export(
     assert app.last_dialog is None
 
     assert str(app.scan_view.backup_button.cget("default")) == "active"
-    app.scan_view.backup_button.invoke()  # 「备份已勾选项」: one click, no preview dialog
+    press_backup(app)  # 1.3.0: 「备份…」, then 「备份」 in the preview
     wait(app)
     result = app.last_dialog
     assert isinstance(result, BackupResultDialog)
     assert [r[0] for r in tree_rows(result.tree)] == ["OK", "OK"]
     texts = labels(result.body)
     assert any(t.startswith("下一步：到“备份库”页点“校验”") and "清理…" in t for t in texts)
-    panel = log_panel(app)
-    assert "开始备份到" in panel and "2 项" in panel and "Readable Game · local：" in panel
+    assert "Readable Game" in log_panel(app), (
+        "1.3.0: the preview showed the plan; the log the result"
+    )
     assert result.primary_button is not None and result.primary_button.cget("text") == "关闭"
     press_enter(result)  # Enter closes the result (D32)
     assert app.last_dialog is None
@@ -938,11 +939,41 @@ class Clicks:
         self.count += 1
 
 
+class MenuEntry:
+    """1.3.0: an entry of a 「更多 ▾」 menu, used like the button it was."""
+
+    def __init__(self, button, index: int) -> None:
+        self.menu = button.nametowidget(button.cget("menu"))
+        self.index = index
+
+    def _refreshed(self):
+        command = self.menu.cget("postcommand")
+        if command:
+            self.menu.tk.call(command)  # as when the menu opens
+        return self.menu
+
+    def instate(self, states: list[str]) -> bool:
+        disabled = self._refreshed().entrycget(self.index, "state") == "disabled"
+        return disabled if states == ["disabled"] else not disabled
+
+    def cget(self, option: str) -> str:
+        return str(self.menu.entrycget(self.index, "label" if option == "text" else option))
+
+    def invoke(self) -> None:
+        self._refreshed().invoke(self.index)
+
+
 def find_button(widget, text: str):
-    """The button showing ``text`` (exactly, or as the start of the text) below ``widget``."""
+    """The button showing ``text`` (exactly, or as the start of the text) below ``widget``;
+    1.3.0: or that entry of a 「更多 ▾」 menu there."""
     for child in widget.winfo_children():
         if child.winfo_class() == "TButton" and str(child.cget("text")).startswith(text):
             return child
+        if child.winfo_class() == "TMenubutton" and child.cget("menu"):
+            menu = child.nametowidget(child.cget("menu"))
+            for index in range((menu.index("end") or -1) + 1):
+                if str(menu.entrycget(index, "label")).startswith(text):
+                    return MenuEntry(child, index)
         found = find_button(child, text)
         if found is not None:
             return found
@@ -1133,7 +1164,7 @@ def test_cancel_a_backup_while_it_copies(
     wait(app)
     assert not app.cancel_button.winfo_manager(), "nothing runs: no 「取消」"
     inside, gate = gated_copy(monkeypatch)
-    app.scan_view.backup_button.invoke()
+    press_backup(app)
     wait_for(app, inside)
     assert app.cancel_button.winfo_manager() and app.cancel_button.cget("text") == "取消"
     app.cancel_task()
@@ -1166,6 +1197,47 @@ def two_games_scanned(app, answers: Answers, games_root: Path, saves_root: Path,
     return app.scan_view
 
 
+def test_backing_up_reads_only_the_ticked_games_again(
+    app, answers: Answers, games_root: Path, saves_root: Path, tmp_path: Path
+) -> None:
+    """1.3.0: 「备份…」 reads only the ticked games' own folders again, not every scan folder
+    (what made the preview wait); the library is still kept out of every scan folder."""
+    view = two_games_scanned(app, answers, games_root, saves_root, tmp_path)
+    first = next(g for g in app.report.games if g.display_name == "Readable Game")
+    other = next(g for g in app.report.games if g is not first)
+    app.selection.games = {k: False for k in app.selection.games}
+    view.toggle_game(next(i for i, g in view.games_by_iid.items() if g is first))
+    roots, _repo, options = app.backup_inputs()
+    assert roots == [Path(first.game_root)] and options["max_depth"] == 0
+    press_backup(app)
+    wait(app)
+    from enginesave.gui.views.dialogs import BackupResultDialog
+
+    assert isinstance(app.last_dialog, BackupResultDialog)
+    assert [r[1] for r in tree_rows(app.last_dialog.tree)][:1] == ["Readable Game"]
+    assert other.display_name not in [r[1] for r in tree_rows(app.last_dialog.tree)]
+    app.last_dialog.cancel()
+
+
+def test_f5_reads_the_library_again_on_its_page(
+    app, answers: Answers, games_root: Path, saves_root: Path, tmp_path: Path, monkeypatch
+) -> None:
+    """1.3.0: no 「刷新」 button: F5 on the library page reads the library again, on the scan
+    page it scans."""
+    two_games_scanned(app, answers, games_root, saves_root, tmp_path)
+    calls: list[str] = []
+    monkeypatch.setattr(app.library, "reload", lambda *a, **k: calls.append("reload"))
+    monkeypatch.setattr(app, "scan", lambda: calls.append("scan"))
+    app.notebook.select(app.library)
+    app.f5()
+    app.notebook.select(app.scan_view)
+    app.f5()
+    assert calls == ["reload", "scan"]
+    assert (
+        find_button(app.library, "刷新") is None and find_button(app.scan_view, "查看详情") is None
+    )
+
+
 EARLIER = "2026-10-20T00:00:00Z"
 
 
@@ -1177,12 +1249,24 @@ def mirrored_before(app, tmp_path: Path, folder: Path) -> None:
     record_mirror(app.settings_file.parent, tmp_path / "library", folder, EARLIER)
 
 
+def press_backup(app):
+    """1.3.0: the scan page's 「备份…」, then 「备份」 in the preview it shows; the backup is
+    under way afterwards (the caller waits for it)."""
+    from enginesave.gui.views.dialogs import BackupPreviewDialog
+
+    app.scan_view.backup_button.invoke()
+    wait(app)
+    preview = app.last_dialog
+    assert isinstance(preview, BackupPreviewDialog), preview
+    preview.start_button.invoke()
+
+
 def one_click_backup(app):
     """「备份已勾选项」, until everything it set off (the library read again, an automatic
     mirror) has finished; the result dialog."""
     from enginesave.gui.views.dialogs import BackupResultDialog
 
-    app.scan_view.backup_button.invoke()
+    press_backup(app)
     wait(app)
     wait(app)
     dialog = app.last_dialog
@@ -1369,7 +1453,7 @@ def test_an_automatic_mirror_is_cancelled_from_the_result_dialog(
         real(*args, **kwargs)
 
     monkeypatch.setattr(mirror, "_mirror_object", held)
-    app.scan_view.backup_button.invoke()
+    press_backup(app)
     wait_for(app, inside)
     dialog = app.last_dialog
     assert dialog.mirror_stop is not None and dialog.mirror_stop.winfo_manager()
@@ -1451,7 +1535,7 @@ def test_cleanup_from_the_result_dialog_stops_the_automatic_mirror(
         real(*args, **kwargs)
 
     monkeypatch.setattr(mirror, "_mirror_object", held)
-    app.scan_view.backup_button.invoke()
+    press_backup(app)
     wait_for(app, inside)
     dialog = app.last_dialog
     clean = find_button(dialog, "清理…")
@@ -1484,7 +1568,7 @@ def test_closing_the_result_dialog_stops_the_automatic_mirror(
         real(*args, **kwargs)
 
     monkeypatch.setattr(mirror, "_mirror_object", held)
-    app.scan_view.backup_button.invoke()
+    press_backup(app)
     wait_for(app, inside)
     dialog = app.last_dialog
     assert dialog.mirror_stop is not None
@@ -1613,7 +1697,7 @@ def test_temporary_folders_are_not_cleaned_while_a_job_runs(
     one_click_backup(app).cancel()  # the library exists now
     app.selection.games = dict.fromkeys(app.selection.games, True)
     inside, gate = gated_copy(monkeypatch)
-    app.scan_view.backup_button.invoke()
+    press_backup(app)
     wait_for(app, inside)
     app.library.clean_tmp()
     assert any("还在进行" in m for m in answers.messages("showinfo"))
@@ -1739,7 +1823,7 @@ def test_closing_during_a_job_stops_it_first(
 
     monkeypatch.setattr(app.root, "destroy", destroy)
     inside, gate = gated_copy(monkeypatch)
-    app.scan_view.backup_button.invoke()
+    press_backup(app)
     wait_for(app, inside)
     app.on_close()
     assert app.closing and app.stop_requested() and not destroyed
@@ -1809,7 +1893,7 @@ def test_clicks_backup_and_clean_up_afterwards(
     saves_root: Path,
     tmp_path: Path,
 ) -> None:
-    """扫描后备份: 1; 备份完成后清理（回收站）: 2."""
+    """扫描后备份: 2 (1.3.0: the preview first); 备份完成后清理（回收站）: 2."""
     built = build_f1(games_root, saves_root)
     typed_prompt.directory = str(games_root)
     app.add_root()
@@ -1818,9 +1902,11 @@ def test_clicks_backup_and_clean_up_afterwards(
     app.scan()
     wait(app)
     clicks = Clicks(typed_prompt)
-    clicks.press(app.scan_view.backup_button)  # 备份已勾选项
+    clicks.press(app.scan_view.backup_button)  # 备份…
     wait(app)
-    assert clicks.count == 1 and [r[0] for r in tree_rows(app.last_dialog.tree)] == ["OK"]
+    clicks.enter(app.last_dialog)  # 备份, in the preview
+    wait(app)
+    assert clicks.count == 2 and [r[0] for r in tree_rows(app.last_dialog.tree)] == ["OK"]
 
     clicks = Clicks(typed_prompt)
     clicks.press(find_button(app.last_dialog.footer, "清理…"))
@@ -2065,6 +2151,7 @@ def test_right_click_menus_and_open_beside_every_path(
     menu = scan.game_menus.menu_for("g0")
     assert entries(menu) == [
         ("确认 / 关联…", "normal"),  # D48 3
+        ("查看详情", "normal"),  # 1.3.0: no button for it any more
         ("打开游戏目录", "normal"),
         ("打开全局存档目录", "normal"),
         ("打开本地存档目录", "normal"),
@@ -2309,7 +2396,7 @@ def test_the_scan_page_folds_games_without_new_saves(
     wait(app)
     assert [is_open for _title, is_open in scan_groups(view)] == [True, False, True]
 
-    view.backup_button.invoke()  # Second Game
+    press_backup(app)  # Second Game
     wait(app)
     app.last_dialog.cancel()
     assert scan_groups(view) == [("已备份、无新存档（2）", False), ("不支持（1：Emuera 1）", True)]
@@ -2345,12 +2432,12 @@ def test_the_groups_follow_backups_removals_and_another_library(
         return {r[2]: r[0] == state.CHECKED for r in game_rows(view)}
 
     view.toggle_game(iids["Bravo"])
-    view.backup_button.invoke()  # Alpha
+    press_backup(app)  # Alpha
     wait(app)
     app.last_dialog.cancel()
     assert ticked() == {"Alpha": False, "Bravo": False}, "D61 ①: Alpha's tick is spent"
     view.toggle_game(iids["Bravo"])
-    view.backup_button.invoke()  # Bravo
+    press_backup(app)  # Bravo
     wait(app)
     app.last_dialog.cancel()
     assert scan_groups(view) == [("已备份、无新存档（2）", False)]
@@ -2367,7 +2454,7 @@ def test_the_groups_follow_backups_removals_and_another_library(
 
     save = next((games_root / "Alpha" / "game" / "saves").glob("*.save"))
     save.write_bytes(save.read_bytes() + b" played on")  # Alpha has a new save now
-    view.backup_button.invoke()  # Bravo only
+    press_backup(app)  # Bravo only
     wait(app)
     app.last_dialog.cancel()
     assert notes()["Alpha"].startswith("有新存档") and ticked()["Alpha"], "ticked again"
@@ -2526,7 +2613,7 @@ def test_the_scan_page_search_box_hides_games_but_keeps_their_ticks(
     app.scan()  # the query is kept: the new rows are filtered as well
     wait(app)
     assert names() == ["Readable Game"] and view.filter.query == "readable"
-    view.backup_button.invoke()  # 备份已勾选项: the hidden game too
+    press_backup(app)  # 备份已勾选项: the hidden game too
     wait(app)
     assert [r[0] for r in tree_rows(app.last_dialog.tree)] == ["OK", "OK"]
     app.last_dialog.cancel()
@@ -2667,7 +2754,7 @@ def test_confirm_link_from_the_menu_makes_a_candidate_ready_to_back_up(
     ]
     assert "已关联：" in log_panel(app)
 
-    view.backup_button.invoke()
+    press_backup(app)
     wait(app)
     # D54: only Nameless Quest is ticked; Readable Game was backed up and has no new saves
     assert [r[0] for r in tree_rows(app.last_dialog.tree)] == ["OK"]
@@ -2763,7 +2850,9 @@ def test_the_window_keeps_the_scan_cache_beside_its_settings(
     reads.clear()
     app.scan_view.backup_button.invoke()
     wait(app)
-    assert reads == [], "the rescan before the backup comes from the cache"
+    assert reads == [], "the rescan before the preview comes from the cache"
+    app.last_dialog.start_button.invoke()
+    wait(app)
     assert [r[0] for r in tree_rows(app.last_dialog.tree)] == ["OK"]
     app.last_dialog.cancel()
 
@@ -2960,10 +3049,10 @@ def test_an_old_library_offers_its_migration_and_is_read_only_until_then(
     first = next(iter(library.records))
     library.record_tree.selection_set(first)
     app.root.update()
-    buttons = {w.cget("text"): w for w, _when in app.actions if hasattr(w, "cget")}
     for name in ("恢复…", "导入…", "清理…", "删除…"):
-        assert buttons[name].instate(["disabled"]), name
-    assert buttons["校验"].instate(["!disabled"]) and buttons["镜像到…"].instate(["!disabled"])
+        assert find_button(library, name).instate(["disabled"]), name
+    assert find_button(library, "校验").instate(["!disabled"])
+    assert find_button(library, "镜像到…").instate(["!disabled"])  # in 「更多 ▾」 (1.3.0)
     menu = library.record_menus.menu_for(first)
     assert menu.entrycget("end", "state") == "disabled", "no rename while read-only"
     library.reload()  # opened again in this session: not asked again
@@ -3034,7 +3123,7 @@ def test_the_window_switches_to_english_and_back_keeping_what_it_holds(
     tabs = [app.notebook.tab(t, "text") for t in app.notebook.tabs()]
     assert tabs == ["Scan & back up", "Library"]
     assert app.scan_button.cget("text") == "Scan (F5)"
-    assert app.scan_view.backup_button.cget("text").startswith("Back up ticked")
+    assert app.scan_view.backup_button.cget("text") == "Back up…"
     assert len(app.scan_view.games_by_iid) == rows, "the scan's results stay"
     menus = [app.scan_view.game_menu(i) for i in app.scan_view.games_by_iid]
     firsts = [m.entrycget(0, "label") for m in menus if m is not None]

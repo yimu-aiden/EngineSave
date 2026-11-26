@@ -224,17 +224,16 @@ GLOSSARY = [  # D68 4: the terms the window uses
 ]
 BUTTONS = [
     ("扫描与备份", "Scan & back up"),
-    ("备份已勾选项", "Back up ticked"),
+    ("备份…", "Back up…"),
     ("本体存在", "Game folder present"),
     ("本体不在", "Game folder absent"),
     ("有新存档可备份", "New saves to back up"),
     ("已备份、无新存档", "Backed up, no new saves"),
     ("待确认", "Needs confirmation"),
     ("不支持", "Unsupported"),
-    ("预览…", "Preview…"),
     ("全选", "Select all"),
     ("全不选", "Select none"),
-    ("刷新", "Refresh"),
+    ("更多", "More"),
     ("校验", "Verify"),
 ]
 

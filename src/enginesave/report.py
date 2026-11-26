@@ -212,6 +212,16 @@ def render_backup_plan(plan: BackupPlan) -> str:
         version = f" ({game.version})" if game.version else ""
         target = f"known game {game.game_id}" if game.game_id else "new game record"
         lines.append(f"[{game.kind}]  {game.display_name}{version}   -> {target}")
+        if game.collections_note:  # 1.3.0 (D74)
+            lines.append(f"  {game.collections_note}")
+        root = game.game.game_root if game.game is not None else ""
+        for similar in game.similar:  # 1.3.0: a new record may split one game in two
+            lines.append(
+                f"  similar record: {similar['name']} ({similar['game_id'][:8]}, "
+                f"{similar['reason']}); if this is a new version of it, first run: "
+                f'enginesave link --repo "{plan.dest}" --game {similar["game_id"][:8]} '
+                f'--game-root "{root}"'
+            )
         for ps in game.sources:
             files, size = len(ps.files), ps.total_bytes
             total_files += files

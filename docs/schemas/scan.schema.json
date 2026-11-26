@@ -27,9 +27,46 @@
     "unlinked": { "type": "array", "items": { "$ref": "#/$defs/unlinked" } },
     "skipped": { "type": "array", "items": { "$ref": "#/$defs/skipped" } },
     "warnings": { "type": "array", "items": { "type": "string" } },
-    "timing": { "$ref": "#/$defs/timing" }
+    "timing": { "$ref": "#/$defs/timing" },
+    "collections": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "1.3.0 (D74): only with --collections (or ENGINESAVE_COLLECTIONS): the Collections source read; error says why it was not used (the scan went on without it)",
+      "required": ["source", "works", "copies", "error"],
+      "properties": {
+        "source": { "type": "string", "description": "the address or file read" },
+        "works": { "type": "integer" },
+        "copies": { "type": "integer" },
+        "error": { "type": ["string", "null"] }
+      }
+    }
   },
   "$defs": {
+    "collections_game": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "1.3.0 (D74): the Collections work this game's folder is a copy of",
+      "required": ["work_id", "title", "version", "record_by", "other_records"],
+      "properties": {
+        "work_id": { "type": "string" },
+        "title": { "type": "string" },
+        "version": { "type": ["string", "null"], "description": "the version Collections gives this copy" },
+        "record_by": {
+          "enum": ["collections", null],
+          "description": "collections: no 6.6 rule found the record, the other copies of the work are in it (known_game_id); a backup links the folder to it"
+        },
+        "other_records": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "records other copies of the same work are in, besides known_game_id: the game is split over several records"
+        },
+        "other_works": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "other works the game's other install folders are copies of (a grouped Ren'Py game whose folders Collections keeps apart)"
+        }
+      }
+    },
     "timing": {
       "type": "object",
       "additionalProperties": false,
@@ -147,6 +184,16 @@
           "type": "array",
           "description": "1.2.0 (D73 6): programs that start this install, most likely first; helper programs (crash handlers, uninstallers, setups, redistributables) are never listed",
           "items": { "$ref": "#/$defs/launch_candidate" }
+        },
+        "collections": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "1.3.0 (D74): only with --collections, when Collections lists this folder as a copy",
+          "required": ["work_id", "version"],
+          "properties": {
+            "work_id": { "type": "string" },
+            "version": { "type": ["string", "null"] }
+          }
         }
       }
     },
@@ -170,8 +217,10 @@
             "config_name_match",
             "dir_name_match",
             "unlinked_save_directory_match",
-            "shared_save_directory"
-          ]
+            "shared_save_directory",
+            "collections_same_work"
+          ],
+          "description": "1.3.0 (D74): collections_same_work, Collections keeps this folder as a copy of the same work as the record's folders (several such records: the user chooses)"
         }
       }
     },
@@ -213,7 +262,8 @@
           "type": "array",
           "items": { "type": "string" },
           "description": "0.8.0 (D48): the game folders of other games that use the same global save directory"
-        }
+        },
+        "collections": { "$ref": "#/$defs/collections_game" }
       }
     },
     "unlinked": {

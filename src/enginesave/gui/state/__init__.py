@@ -104,6 +104,7 @@ from enginesave.gui.state.folders import (
     unlinked_folders,
 )
 from enginesave.gui.state.guidance import (
+    BACKUP_BUTTON,
     DONE_MARK,
     FIRST_STEPS,
     NEXT_MARK,
@@ -119,6 +120,7 @@ from enginesave.gui.state.library import (
     GONE_GROUP,
     INSTALLED_GROUP,
     KIND_TEXTS,
+    MORE_MENU,
     NO_MATCH,
     NOT_VERIFIED,
     SEARCH_PLACEHOLDER,
@@ -126,6 +128,8 @@ from enginesave.gui.state.library import (
     WIDEST_KIND,
     RecordRow,
     SnapshotRow,
+    attachments_start_folder,
+    attachments_text,
     check_count_text,
     group_label,
     reason_text,
@@ -205,6 +209,8 @@ from enginesave.gui.state.removing import (
     whole_record,
 )
 from enginesave.gui.state.restoring import (
+    RETARGET_HINT,
+    RETARGET_LABEL,
     from_install_text,
     restore_choose_root,
     restore_notes,
@@ -214,6 +220,7 @@ from enginesave.gui.state.restoring import (
 )
 from enginesave.gui.state.scanning import (
     CANCELLED_BACKUP,
+    COLLECTIONS_DEFAULT,
     EXCLUDE_PROBES,
     EXCLUDES_LABEL,
     LIBRARY_SWITCHED,
@@ -280,6 +287,10 @@ __all__ = [
     "DEFAULT_CHECKED",
     "DONE_MARK",
     "EMPTY_RECORD",
+    "BACKUP_BUTTON",
+    "COLLECTIONS_DEFAULT",
+    "RETARGET_HINT",
+    "RETARGET_LABEL",
     "EXCLUDES_LABEL",
     "EXCLUDE_PROBES",
     "FIRST_STEPS",
@@ -298,6 +309,7 @@ __all__ = [
     "GameRow",
     "INSTALLED_GROUP",
     "KIND_TEXTS",
+    "MORE_MENU",
     "LATER",
     "LEFT_FOR_LATER",
     "LIBRARY_SWITCHED",
@@ -379,6 +391,8 @@ __all__ = [
     "candidate_reason",
     "candidate_sources",
     "candidate_values",
+    "attachments_start_folder",
+    "attachments_text",
     "check_count_text",
     "checkable",
     "checked_text",

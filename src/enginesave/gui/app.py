@@ -88,6 +88,74 @@ def enable_dpi_awareness() -> None:
             ctypes.windll.user32.SetProcessDPIAware()
 
 
+class _PowerThrottling(ctypes.Structure):
+    _fields_ = [  # PROCESS_POWER_THROTTLING_STATE
+        ("Version", ctypes.c_ulong),
+        ("ControlMask", ctypes.c_ulong),
+        ("StateMask", ctypes.c_ulong),
+    ]
+
+
+PROCESS_POWER_THROTTLING = 4  # PROCESS_INFORMATION_CLASS ProcessPowerThrottling
+THROTTLING_EXECUTION_SPEED = 0x1
+
+
+def keep_full_speed() -> bool:
+    """1.3.0: tell Windows not to run the window's process slowly ("efficiency mode",
+    EcoQoS) while it is minimized or in the background. Windows 11 does that by itself; the
+    window, restored, then draws its parts slowly and shows black or white areas until it
+    has. ``True`` when Windows took it (it needs Windows 10 1709 or later)."""
+    if sys.platform != "win32":
+        return False
+    try:
+        state = _PowerThrottling(1, THROTTLING_EXECUTION_SPEED, 0)  # controlled: not throttled
+        kernel32 = ctypes.windll.kernel32
+        kernel32.GetCurrentProcess.restype = ctypes.c_void_p
+        kernel32.SetProcessInformation.argtypes = [
+            ctypes.c_void_p,
+            ctypes.c_int,
+            ctypes.c_void_p,
+            ctypes.c_ulong,
+        ]
+        return bool(
+            kernel32.SetProcessInformation(
+                kernel32.GetCurrentProcess(),
+                PROCESS_POWER_THROTTLING,
+                ctypes.byref(state),
+                ctypes.sizeof(state),
+            )
+        )
+    except (AttributeError, OSError):
+        return False
+
+
+COLOR_BTNFACE = 15  # the colour of a window's background (#F0F0F0 in the usual theme)
+GCLP_HBRBACKGROUND = -10
+
+
+def paint_background_while_drawing(root: tk.Tk) -> bool:
+    """1.3.0: Tk's windows have no background of their own (Tk paints it), so for the moment
+    between Windows showing a restored window and Tk drawing it, the parts not drawn yet are
+    black. Giving Tk's window classes the window colour as their background makes that
+    moment the window's own grey. ``True`` when it was set."""
+    if sys.platform != "win32":
+        return False
+    try:
+        user32 = ctypes.windll.user32
+        user32.GetSysColorBrush.restype = ctypes.c_void_p
+        setter = getattr(user32, "SetClassLongPtrW", None) or user32.SetClassLongW
+        setter.restype = ctypes.c_void_p
+        setter.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_void_p]
+        brush = user32.GetSysColorBrush(COLOR_BTNFACE)
+        root.update_idletasks()  # the windows exist only once Tk has made them
+        # one window of each class sets it for all: the frame (TkTopLevel), a part (TkChild)
+        for handle in (int(root.wm_frame(), 16), root.winfo_id()):
+            setter(handle, GCLP_HBRBACKGROUND, brush)
+        return True
+    except (AttributeError, OSError, ValueError, tk.TclError):
+        return False
+
+
 def apply_scaling(root: tk.Tk) -> float:
     """Tk points follow the real DPI (96 dpi → 1.33)."""
     scaling = root.winfo_fpixels("1i") / 72.0
@@ -202,7 +270,7 @@ class App(ScanAndBackup):
         root.rowconfigure(2, weight=1)
         root.report_callback_exception = self.callback_exception  # type: ignore[method-assign]
         root.protocol("WM_DELETE_WINDOW", self.on_close)
-        root.bind("<F5>", lambda _event: None if self.runner.busy else self.scan())
+        root.bind("<F5>", lambda _event: self.f5())
         for key in ("<Control-f>", "<Control-F>"):  # D46: the search box of the page shown
             root.bind(key, lambda _event: self.focus_filter())
         if settings_note:
@@ -383,6 +451,16 @@ class App(ScanAndBackup):
         self.progress.pack(side="right")
         ttk.Label(bar, textvariable=self.repo_status_var).pack(side="right", padx=(PAD * 2, PAD))
         ttk.Label(bar, textvariable=self.scan_var).pack(side="right", padx=PAD)
+
+    def f5(self) -> None:
+        """F5: scan on the scan page; on the library page (1.3.0, no 「刷新」 button any more)
+        read the library again."""
+        if self.runner.busy:
+            return
+        if self.notebook.select() == str(self.library):
+            self.library.reload()
+        else:
+            self.scan()
 
     def focus_filter(self) -> str:
         """Ctrl+F: the cursor into the search box of the page shown (D46)."""
@@ -887,6 +965,7 @@ def main(argv: list[str] | None = None) -> int:
         report(_(TK_MISSING))
         return 3
     enable_dpi_awareness()
+    keep_full_speed()  # 1.3.0: restored after being minimized, it draws at once
     try:
         root = tk.Tk()
     except tk.TclError as exc:
@@ -906,6 +985,7 @@ def main(argv: list[str] | None = None) -> int:
         report(_("图形界面启动失败：{name__}: {exc}", name__=type(exc).__name__, exc=exc))
         root.destroy()
         return 3
+    paint_background_while_drawing(root)  # 1.3.0: grey, not black, before Tk has drawn
     if carried:
         logging.getLogger("enginesave.gui").info(
             _("已沿用 SaveTrail 的设置：{names}", names=_("、").join(carried))

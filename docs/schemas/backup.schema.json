@@ -36,7 +36,12 @@
         "game_root": { "type": ["string", "null"] },
         "game_id": { "type": ["string", "null"], "description": "null: a new record will be created" },
         "sources": { "type": "array", "items": { "$ref": "#/$defs/planned_source" } },
-        "from_install": { "type": ["object", "null"], "$ref": "#/$defs/from_install", "description": "1.2.0 (D73 14): the install the snapshot comes from (--game-root, the game's only install, or the one install all its local saves are in); null when several installs take part, or for an orphaned save folder" }
+        "from_install": { "type": ["object", "null"], "$ref": "#/$defs/from_install", "description": "1.2.0 (D73 14): the install the snapshot comes from (--game-root, the game's only install, or the one install all its local saves are in); null when several installs take part, or for an orphaned save folder" },
+        "collections": {
+          "type": "object",
+          "description": "1.3.0 (D74): only with --collections, when Collections lists the game's folder: the game's collections object of the scan report (work_id, title, version, record_by, other_records)",
+          "required": ["work_id", "title", "version", "record_by", "other_records"]
+        }
       }
     },
     "from_install": {
@@ -122,7 +127,28 @@
         "skipped": { "type": "array", "items": { "$ref": "#/$defs/skipped" } },
         "cancelled": { "const": true, "description": "0.9.0 (D58): only when it was stopped; results are the games done, the one being copied got no snapshot" },
         "pruned": { "$ref": "#/$defs/pruned", "description": "1.2.0 (D73 3): only with --keep-auto" },
-        "mirror": { "$ref": "#/$defs/mirror", "description": "1.2.0 (D73 16): only with --mirror or --auto-mirror; its failure never changes the exit code" }
+        "mirror": { "$ref": "#/$defs/mirror", "description": "1.2.0 (D73 16): only with --mirror or --auto-mirror; its failure never changes the exit code" },
+        "linked": {
+          "type": "array",
+          "description": "1.3.0 (D74): only when a folder was linked: game folders Collections said are a version of the record's game, linked to it (link_root) so later scans keep them there",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["game_id", "type", "game_root", "linked_at", "linked_by"],
+            "properties": {
+              "game_id": { "type": "string" },
+              "type": { "const": "link_root" },
+              "game_root": { "type": "string" },
+              "linked_at": { "type": "string" },
+              "linked_by": { "const": "collections" }
+            }
+          }
+        },
+        "absorbed": {
+          "type": "array",
+          "description": "1.3.0 (D77): only when it happened: attachment-only records of a Collections work merged into the record the work's game was backed up into (the shape of attachments merge --json)",
+          "items": { "type": "object" }
+        }
       }
     },
     "pruned": {

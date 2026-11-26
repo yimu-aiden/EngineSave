@@ -1,4 +1,4 @@
-"""The window's scan and backup actions (「扫描」, 「备份已勾选项」, 「预览…」), split out of
+"""The window's scan and backup actions (「扫描」, 「备份…」 with its preview), split out of
 ``gui/app.py`` in 0.6.0 (D38). ``App`` mixes this class in; the methods use the window's
 settings, task runner, views and log like any other ``App`` method.
 """
@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import dataclasses
 import logging
+import os
 import time
 from collections.abc import Callable
 from pathlib import Path
@@ -72,6 +73,7 @@ class ScanAndBackup:
             repo=self._scan_repo(),
             excludes=list(self.settings.scan_excludes),  # D63: 「扫描时跳过的文件夹」
             should_stop=self.stop_requested,  # D58: 「取消」, between folders
+            collections=self.settings.collections_source,  # 1.3.0 (D74)
         )
         cache_file = self.cache_file
         include_candidates = self.settings.include_candidates
@@ -153,7 +155,29 @@ class ScanAndBackup:
         if not options["select_roots"] and not options["include_unlinked"]:
             self.info(_("没有勾选任何游戏或孤立存档目录。"))
             return None
-        return [Path(r) for r in self.settings.scan_roots], repo, options
+        options["collections"] = self.settings.collections_source  # 1.3.0 (D74)
+        roots = [Path(r) for r in self.settings.scan_roots]
+        from enginesave.backup import check_destination
+        from enginesave.engines.renpy.paths import default_saves_root
+
+        try:  # the library stays out of every scan folder, as before
+            saves_root, _how = default_saves_root(self.env, self.saves_override())
+            check_destination(Path(os.path.abspath(repo)), roots, saves_root)
+        except EngineSaveError as exc:
+            self.show_error(exc)
+            return None
+        # 1.3.0: only the ticked games' own folders are read again (as backup --game-root),
+        # not every scan folder: the preview and the backup start in seconds
+        options.pop("excludes", None)  # they were found by a scan that skipped those already
+        ticked = {str(p) for p in options["select_roots"]}
+        folders: dict[str, Path] = {}
+        for game in self.report.games:  # every folder of a game grouped from several (D9)
+            if game.game_root in ticked:
+                for folder in [game.game_root, *(i.get("game_root") for i in game.installs)]:
+                    if folder:
+                        folders.setdefault(os.path.normcase(str(folder)), Path(str(folder)))
+        narrowed = list(folders.values())
+        return narrowed, repo, {**options, "max_depth": 0, "scan_unlinked": False}
 
     def backup_checked(self) -> None:
         """「备份已勾选项」 (D32), on the scan page and in the orphaned-folders dialog: one click

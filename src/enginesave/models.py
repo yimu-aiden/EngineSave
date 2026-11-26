@@ -219,6 +219,11 @@ class DetectedGame(JsonModel):
     installs: list[dict] = field(default_factory=list)
     # 0.8.0 (D48): the game folders of other games that use the same global save directory
     shared_global_with: list[str] = field(default_factory=list)
+    # 1.3.0 (D74): the Collections work this game's folder is a copy of ({"work_id", "title",
+    # "version", "record_by", "other_records"}); only in a scan given a Collections source
+    collections: dict | None = None
+
+    OPTIONAL_FIELDS: ClassVar[tuple[str, ...]] = ("collections",)
 
     def source(self, source_id: str) -> SaveSource | None:
         return next((s for s in self.sources if s.source_id == source_id), None)
@@ -249,6 +254,11 @@ class ScanReport(JsonModel):
     # 0.6.0 (D34): {"total_seconds", "roots": [{"root", "seconds"}], "slowest": [{"path",
     # "seconds"}]}; the slowest folders only when the scan took longer than a minute.
     timing: dict = field(default_factory=dict)
+    # 1.3.0 (D74): the Collections source read ({"source", "works", "copies", "error"}); only
+    # in a scan given one
+    collections: dict | None = None
+
+    OPTIONAL_FIELDS: ClassVar[tuple[str, ...]] = ("collections",)
 
     def summary(self) -> dict[str, int]:
         counts = {status.value: 0 for status in GameStatus}

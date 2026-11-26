@@ -69,10 +69,27 @@ def _unattended_options(parser: argparse.ArgumentParser) -> None:
     )
 
 
+GAME_HELP = (
+    "the record: its id (or the first 6+ characters), name, folder under games\\, save "
+    "directory, or a game folder it knows (1.3.0)"
+)
+
+
+def _collections_option(parser: argparse.ArgumentParser) -> None:
+    """1.3.0 (D74): read which folders are versions of one game from Collections."""
+    parser.add_argument(
+        "--collections",
+        metavar="URL|FILE",
+        help="a Collections server (e.g. http://127.0.0.1:7788) or a JSON file of its copies: "
+        "the versions of one game there go into one record, also when the save directory or "
+        "title changed (also via ENGINESAVE_COLLECTIONS; 'off' for none)",
+    )
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="enginesave",
-        description="Ren'Py save discovery, backup, verification and restore.",
+        description="Find game saves by engine; back them up, verify, restore, clean up.",
     )
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     _common_options(parser, subcommand=False)
@@ -98,6 +115,7 @@ def build_parser() -> argparse.ArgumentParser:
     scan.add_argument(
         "--repo", metavar="DIR", help="recognise games already in this backup repository"
     )
+    _collections_option(scan)
     _unattended_options(scan)
 
     backup = commands.add_parser("backup", help="copy confirmed save sources into a repository")
@@ -143,6 +161,7 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="like --mirror, when the window's setting 'mirror automatically' is on",
     )
+    _collections_option(backup)
     _unattended_options(backup)
     backup.add_argument(
         "--select",
@@ -186,17 +205,23 @@ def build_parser() -> argparse.ArgumentParser:
     listing = commands.add_parser("list", help="games and snapshots in a repository")
     _common_options(listing, subcommand=True)
     listing.add_argument("--repo", required=True, metavar="DIR")
+    listing.add_argument(
+        "--report", metavar="FILE.json", help="also write the JSON here (1.3.0; not in the library)"
+    )
 
     show = commands.add_parser("show", help="one game's record, or one snapshot's manifest")
     _common_options(show, subcommand=True)
     show.add_argument("--repo", required=True, metavar="DIR")
-    show.add_argument("--game", required=True, metavar="ID", help="game id, save dir or name")
+    show.add_argument("--game", required=True, metavar="ID", help=GAME_HELP)
     show.add_argument("--snapshot", metavar="SID", help="snapshot id or 'latest'")
+    show.add_argument(
+        "--report", metavar="FILE.json", help="also write the JSON here (1.3.0; not in the library)"
+    )
 
     verify = commands.add_parser("verify", help="re-hash stored snapshots against manifests")
     _common_options(verify, subcommand=True)
     verify.add_argument("--repo", required=True, metavar="DIR")
-    verify.add_argument("--game", metavar="ID")
+    verify.add_argument("--game", metavar="ID", help=GAME_HELP)
     verify.add_argument("--snapshot", metavar="SID")
     verify.add_argument(
         "--objects",
@@ -207,7 +232,7 @@ def build_parser() -> argparse.ArgumentParser:
     restore = commands.add_parser("restore", help="put a snapshot back (preview, then confirm)")
     _common_options(restore, subcommand=True)
     restore.add_argument("--repo", required=True, metavar="DIR")
-    restore.add_argument("--game", required=True, metavar="ID")
+    restore.add_argument("--game", required=True, metavar="ID", help=GAME_HELP)
     restore.add_argument("--snapshot", default="latest", metavar="SID|latest")
     restore.add_argument("--game-root", metavar="PATH", help="install folder to restore into")
     restore.add_argument(
@@ -219,6 +244,13 @@ def build_parser() -> argparse.ArgumentParser:
         help="with --game-root, when the snapshot holds the local saves of several installs: "
         "those of this install (default: the install the snapshot came from)",
     )
+    restore.add_argument(
+        "--retarget",
+        action="store_true",
+        help="with --game-root: it is a newer version of this game that keeps its saves under "
+        "another name (a new Ren'Py save directory, a new title); restore into the places that "
+        "version uses, and link its folder to this record",
+    )
     restore.add_argument("--dry-run", action="store_true", help="show the plan, write nothing")
     restore.add_argument("--yes", action="store_true", help="do not ask for confirmation")
     restore.add_argument("--no-safety-snapshot", action="store_true", help=argparse.SUPPRESS)
@@ -227,8 +259,17 @@ def build_parser() -> argparse.ArgumentParser:
     link = commands.add_parser("link", help="always associate an install folder with a game")
     _common_options(link, subcommand=True)
     link.add_argument("--repo", required=True, metavar="DIR")
-    link.add_argument("--game", required=True, metavar="ID")
-    link.add_argument("--game-root", required=True, metavar="PATH")
+    link.add_argument("--game", required=True, metavar="ID", help=GAME_HELP)
+    link.add_argument(
+        "--game-root",
+        metavar="PATH",
+        help="the install folder that belongs to the record (required unless --collections-work)",
+    )
+    link.add_argument(
+        "--collections-work",
+        metavar="WORK_ID",
+        help="1.3.0: the record keeps this Collections work (--game collections:<id> finds it)",
+    )
 
     confirm_source = commands.add_parser(
         "confirm-source", help="mark a CANDIDATE save folder as confirmed for a game"
@@ -242,7 +283,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="instead of --game: scan this install folder (read only) and create the record "
         "if the repository has none",
     )
-    confirm_source.add_argument("--source-id", required=True, metavar="SID")
+    confirm_source.add_argument(
+        "--source-id",
+        metavar="SID",
+        help="the source's id (1.3.0: optional; default: the id the scan gave the folder with "
+        "--game-root, else the folder's name)",
+    )
     confirm_source.add_argument("--path", required=True, metavar="PATH")
 
     export = commands.add_parser(
@@ -291,7 +337,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     _common_options(cleanup, subcommand=True)
     cleanup.add_argument("--repo", required=True, metavar="DIR")
-    cleanup.add_argument("--game", required=True, metavar="ID")
+    cleanup.add_argument("--game", required=True, metavar="ID", help=GAME_HELP)
     cleanup.add_argument("--snapshot", default="latest", metavar="SID|latest")
     cleanup.add_argument(
         "--game-root",
@@ -373,6 +419,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="instead: the temporary folders interrupted runs left (not those changed in the "
         "last 10 minutes), then reclaim the object store's space",
     )
+    remove.add_argument(
+        "--with-attachments",
+        action="store_true",
+        help="when the whole record goes, delete its 附件 (attachments) too; they are kept "
+        "otherwise (1.3.0)",
+    )
     remove.add_argument("--dry-run", action="store_true", help="show what would go, delete nothing")
     remove.add_argument(
         "--yes", action="store_true", help="delete; without it only the preview is shown"
@@ -414,6 +466,53 @@ def build_parser() -> argparse.ArgumentParser:
         "about", help="this EngineSave's version and the versions of its JSON outputs"
     )
     _common_options(about, subcommand=True)
+
+    # 1.3.0 (D76): a record's 附件 (attachments): guides, patches, notes kept with its saves
+    attachments = commands.add_parser(
+        "attachments",
+        help="a record's 附件 (attachments) folder: list, add files, open it",
+    )
+    actions = attachments.add_subparsers(
+        dest="attachments_command", metavar="ACTION", required=True
+    )
+    merging = actions.add_parser(
+        "merge",
+        help="move one record's 附件 and Collections works into another (two works merged); "
+        "the record merged from goes when it has no snapshots",
+    )
+    _common_options(merging, subcommand=True)
+    merging.add_argument("--repo", required=True, metavar="DIR")
+    merging.add_argument("--from", dest="from_ref", required=True, metavar="ID", help=GAME_HELP)
+    merging.add_argument("--into", required=True, metavar="ID", help=GAME_HELP)
+    for action, text in (
+        ("list", "what the record's 附件 folder holds"),
+        ("add", "copy (or --move) files into the record's 附件 folder"),
+        ("open", "open the record's 附件 folder in Explorer, creating it when missing"),
+    ):
+        sub = actions.add_parser(action, help=text)
+        _common_options(sub, subcommand=True)
+        sub.add_argument("--repo", required=True, metavar="DIR")
+        sub.add_argument("--game", required=True, metavar="ID", help=GAME_HELP)
+        if action != "list":
+            sub.add_argument(
+                "--title",
+                metavar="TEXT",
+                help="with --game collections:<work id> that no record keeps: make a record "
+                "for it (attachments only, no snapshots yet) named TEXT",
+            )
+        if action == "add":
+            sub.add_argument("files", nargs="+", metavar="FILE", help="files to add")
+            sub.add_argument(
+                "--move",
+                action="store_true",
+                help="move the files in (across drives: copied, then the original removed)",
+            )
+        if action == "open":
+            sub.add_argument(
+                "--create-only",
+                action="store_true",
+                help="create the folder and print where it is; do not open Explorer",
+            )
     return parser
 
 
@@ -452,6 +551,10 @@ def load_handler(command: str) -> Handler:
         from enginesave.cli.about import cmd_about
 
         return cmd_about
+    if command == "attachments":
+        from enginesave.cli.attaching import cmd_attachments
+
+        return cmd_attachments
     if command in ("export", "import"):
         from enginesave.cli import transfer
 
@@ -483,6 +586,13 @@ def _lock_target(args: argparse.Namespace) -> tuple[Path, bool] | None:
     no library yet (the command says what is wrong with it; ``backup`` creates one)."""
     from enginesave.repo import CATALOG
 
+    if args.command == "attachments":  # 1.3.0 (D76, D77): these write into the library
+        if args.attachments_command == "list":
+            return None
+        if args.attachments_command == "open" and not getattr(args, "title", None):
+            return None  # only makes the folder of a record that is there
+        root = Path(os.path.abspath(args.repo))
+        return (root, False) if (root / CATALOG).is_file() else None
     if args.command not in LOCKED or getattr(args, "dry_run", False):
         return None
     if args.command == "remove" and not args.yes:  # only the preview

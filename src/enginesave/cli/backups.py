@@ -27,6 +27,7 @@ from enginesave.cli.common import (
     stopper,
     write_report,
 )
+from enginesave.collections_link import source_from as collections_source
 from enginesave.errors import STOPPED_EXIT_CODE, UsageError
 from enginesave.repo import Repo
 from enginesave.report import render_backup_plan, render_backup_result
@@ -101,6 +102,7 @@ def cmd_backup(args: argparse.Namespace) -> int:
         cache=None if args.no_cache else ScanCache.load(default_path()),
         should_stop=stop,  # D58: Ctrl+C; D73 9: the stop file
         scan_progress=progress.scan_callback(),
+        collections=collections_source(args.collections),  # 1.3.0 (D74)
         **narrow,
     )
     data: dict[str, Any] = {"dry_run": args.dry_run, "plan": plan.to_dict(), "result": None}

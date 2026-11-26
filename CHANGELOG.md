@@ -6,6 +6,56 @@
 
 ## [Unreleased]
 
+## [1.3.0] - 2026-11-25
+
+一个游戏的几个版本留在一条记录里，并能把旧版本的存档恢复进存档换了名字的新版本（D74）；易用性走查后的一批改进（D75）；每条记录的"附件"（D76）；记录记下 Collections 的作品、没有存档的作品也能存附件、合并作品（D77）。走查结论、改法与理由、留待以后的见 [docs/usability-1.3.0.md](docs/usability-1.3.0.md)。全部是加法：已有参数、退出码与 `--json` 字段的含义不变，各 JSON 的格式号不变；备份库与快照清单格式不变（`link_root` 覆盖项可能多一个 `linked_by`），1.2.0 照样能读写 1.3.0 写过的备份库。
+
+### Added
+
+- **读 Collections 的副本**（D74）：`scan`、`backup` 的 `--collections URL|FILE`（或环境变量 `ENGINESAVE_COLLECTIONS`；`off` 为不用），窗口"设置…"里的"Collections 地址"（"本机默认"填 `http://127.0.0.1:7788`）。读 Collections 的 `GET /api/enginesave/copies`（或同格式的 JSON 文件），知道哪些安装目录是同一部作品的副本。6.6 规则对不上记录的游戏，若同一部作品的其他副本只在一条记录里（副本记的 `enginesave_id`、记录的安装目录、`link_root`、这次扫描里同一部的其他目录），就归到那条记录；几条时都作为关联建议（新原因 `collections_same_work`），不替用户挑。备份进去后把它的目录 `link_root` 到那条记录（`result.linked`），以后不带 Collections 也认得；同一次备份里同一部作品的几个新目录进同一条新记录。扫描报告多了 `collections`（读了哪里、几部作品、几份副本、读不到的原因）与每个游戏的 `collections`（`work_id`、`title`、`version`、`record_by`、`other_records`：同一部作品还在哪些别的记录里）、每个安装的 `collections`；备份计划的游戏也带它。读不到 Collections 只是一条扫描警告，照常扫描。
+- **`restore --retarget`**（D74；窗口恢复对话框的"这是这个游戏的新版本、存档换了名字…"）：与 `--game-root` 一起用，目标是这个游戏的新版本、存档换了名字（Ren'Py 存档目录或标题变了）：每个来源放到新版本用的同类位置（同一根令牌下新版本自己的存档文件夹），找不到对应位置的留在快照里并写明；恢复后把目标目录关联到这条记录（`result.linked`）。计划多了 `retargeted: [{source_id, from, to}]`。安全快照、预览与逐文件校验照旧。
+- `list`、`show` 的 `--report FILE.json`：JSON 另写一份到文件，规则同 `scan --report`（不能写进备份库）。
+- `list --json` 每条记录多了 `folder`（`games\` 下的文件夹名）。
+- `--game` 也认记录在 `games\` 下的文件夹名（窗口与 `INDEX.txt` 里看到的名字）与记录认识的游戏目录（它的安装或关联的目录）。
+- `remove --snapshot latest`。
+- `confirm-source` 的 `--source-id` 可以不给：带 `--game-root` 时用扫描给这个文件夹的来源 ID，否则用文件夹名。
+- 文字的备份计划里，将新建记录、却有相近记录的游戏多一行 `similar record: <名字> (<ID 前 8 位>, <原因>)` 与把它关联过去的命令。
+- **附件**（D76）：每条记录一个 `games\<记录文件夹>\附件\`，放攻略、补丁等随游戏保存的文件。普通文件，不分版本，不进快照、对象库与导出；校验、`--keep-auto`、删快照、清理游戏目录都不碰它，也不把它算作多余的内容。
+  - 命令行（`--game` 与其他命令认同样的写法）：
+    - `enginesave attachments list --repo DIR --game X [--json]`：`{game_id, folder（绝对路径，还没建也给）, exists, entries: [{name, kind: file|dir, bytes}]（只列第一层，文件夹的 bytes 是其下全部）, file_count（递归）, total_bytes, approximate（看了 2 万项就停）}`。
+    - `enginesave attachments add --repo DIR --game X [--move] FILE...`：复制（`--move` 则移动；跨盘时先复制完整再删原文件）进附件文件夹，没有就建；文件名去掉 Windows 不许的字符、设备名、结尾的点与空格，并截短到整个路径不超过 260；重名加 ` (2)`。先写成临时文件、完整后才改成正式名字，失败时不留半个文件，`--move` 时原文件不动。持备份库写锁（被占时退出码 4）。`--json`：`{game_id, folder, saved: [{source, name, bytes}], failed: [{source, error}]}`；有失败时退出码 1。
+    - `enginesave attachments open --repo DIR --game X [--create-only] [--json]`：在资源管理器里打开（没有就先建）；`--create-only` 只建、不打开。`--json`：`{game_id, folder}`。
+  - 窗口：备份库页选中记录后，快照下面写"附件：N 个文件，大小"，旁边"打开附件文件夹""添加附件…"；"添加附件…"的选择框从游戏自己的文件夹（最近见到、现在还在的安装目录）打开，没有时用系统默认位置。
+  - 删除整条记录时附件默认留下（记录文件夹里只剩"附件"），`remove --with-attachments` 才一起删；删除计划的每项多了 `attachments`（有附件时 `{folder, file_count, total_bytes}`），计划多了 `with_attachments`。只剩附件的文件夹不算"不在目录里的记录文件夹"；之后同名的新记录用这个文件夹，附件跟过去。
+  - 镜像把附件一起复制（新文件与大小、时间变了的；镜像里的不删），结果多了 `attachments_copied`。
+  - `INDEX.txt` 写出每条记录的附件数，快照的 `README.txt` 说明附件在记录文件夹的"附件"里。`about --json` 的 `formats` 多了 `attachments: 1`。
+- **记录记下 Collections 的作品**（D77）：存档与附件的文件都只在 EngineSave 里，Collections 只管元数据、调用命令行。
+  - 记录的 `game.json` 与目录条目多了 `collections_work_ids`（这条记录保存的 Collections 作品）；带 `--collections` 备份到的游戏会把作品记上。`--game collections:<作品 id>` 找到保存这部作品的记录（几条时退出码 2，提示合并）。
+  - 还没有记录的作品（本机没装、或从没备份过）也能存附件：`attachments add|open --game collections:<作品 id> --title <名字>` 建一条只有附件的记录（没有快照，引擎为 `null`，文件夹按名字取）；`list` 对没有记录的作品返回 `game_id: null`，不建记录。之后带 `--collections` 扫描或备份到这部作品的目录时，游戏归到这条记录，第一次备份补上引擎与身份，名字保留 Collections 给的。
+  - 游戏已有自己的记录、同一部作品另有只有附件的记录时，带 `--collections` 的备份把附件与作品并进游戏的记录并删掉空的那条（`result.absorbed`）。
+  - `attachments merge --repo DIR --from A --into B`（Collections 合并了两部作品）：A 的附件移进 B（重名加 ` (2)`），A 的作品归 B（旧作品 id 照样找到 B）；A 没有快照就删掉，有快照则保留（存档不搬），只去掉它的作品。
+  - `link --game X --collections-work <作品 id>`：让一条记录保存这部作品；已由别的记录保存时退出码 2，提示用 `attachments merge`。`link` 的 `--game-root` 因此不再必填（两者给一个）。
+  - `list --json` 每条记录多了 `collections_work_ids` 与 `attachments: {file_count, total_bytes, approximate}`。
+  - 备份库格式不变，不需要迁移：1.2.0 的库直接用；`collections_work_ids` 与只有附件的记录 1.2.0 也读得了，但 1.2.0 删除整条记录时会连附件一起删，有附件的库请只用 1.3.0。
+
+### Changed
+
+- 恢复到另一个目录时按快照本身核对身份：目标游戏的存档位置包含快照里所有游戏目录以外的来源时，就算记录的存档目录不同也照常恢复（一条关联过新版本的记录里有新旧两种存档目录的快照）。
+- 已关联到这条记录（`link`，或已经备份进这条记录）的目录，存档换了名字时恢复不再拒绝，按 `--retarget` 处理，计划的说明里写明。不是这条记录的目录照旧拒绝，报错里写明可以加 `--retarget`。
+- `backup --skip-unchanged`：记录最新的快照来自另一个安装（两个版本共用一条记录、轮流备份）时，改与这个安装自己最新的快照比；最新快照来自这个安装或不写来自哪个安装时与 1.2.0 相同。以前这种情况每次都建新快照。
+- 快照里有几个安装的本地存档、恢复到的目录本身就是其中一个时，自动恢复它自己的；仍要选时，报错逐个列出每个本地来源的目录与版本。
+- `--game` 有歧义时列出 `<ID> (<名字>)`；找不到时说明能写什么。
+- 窗口：扫描页的"备份已勾选项"和"预览…"合成一个**备份…**：点了先出预览，在预览里点**备份**才开始（孤立存档目录对话框同样）；引导与提示文字跟着改。
+- 窗口：按钮收一收——扫描页去掉"查看详情"（双击一行，或右键菜单里的"查看详情"）；备份库页去掉"刷新"（每次改动后本来就重读，在备份库页按 F5 也重读），"导出…""导入…""镜像到…"收进下拉按钮"更多"。
+- 窗口：备份前（含预览）只重新读一遍勾选游戏自己的目录（与命令行 `backup --game-root` 相同），不再把所有扫描根目录整个重扫一遍，预览与备份几秒内出来；备份库仍不许放在任何扫描根目录里，一个游戏的几个版本目录（D9）一起读。
+- 命令行 `--help` 的说明与各命令 `--game` 的帮助更新。
+
+### Fixed
+
+- `restore --from-install PATH`：快照只有一个本地来源、却不是 PATH 那个安装的，以前静默恢复了它（别的版本的存档），现在退出码 2 并写明。
+- 窗口最小化后再点开时闪一下黑块：Tk 的窗口没有自己的背景色（由 Tk 画），Windows 把还原的窗口显示出来、Tk 还没画完的那一下，没画到的部分是黑的。现在给 Tk 的窗口类登记窗口底色（`SetClassLongPtr` 的背景画刷），那一下是窗口本来的浅灰；并告诉 Windows 不要让最小化的窗口程序以"效率模式"降速运行（`SetProcessInformation` 的 ProcessPowerThrottling），还原后画得更快。不支持的旧 Windows 照旧。
+- `export --to` 一个不存在、又不以 `.zip` 结尾的路径，以前写出一个没有扩展名的 zip（之后 `--all --to` 同一路径报"is a file"），现在退出码 2 并提示。
+
 ## [1.2.0] - 2026-11-07
 
 让 `enginesave-cli` 能由别的程序在后台、无窗口、非交互地调用（D73，总是 `--json --yes`），并按"安装目录"报告游戏、在快照里记下它来自哪个安装。全部是加法：已有参数、字段与退出码的含义不变，`--json` 只多了字段（各输出的格式号不变，`enginesave about` 可查）；新增退出码 4（备份库正忙）。备份库与快照清单的格式号不变：清单多了可选的 `from_install`，`game.json` 的安装项多了可选的 `game_version`，库根多了运行中才有的 `enginesave.lock`；1.1.0 照样能读写 1.2.0 写过的备份库。

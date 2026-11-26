@@ -64,6 +64,13 @@ class GuiSettings:
     scan_excludes: list[str] = field(default_factory=list)
     # 0.11.0 (D68 2): "auto" (Windows' display language), "zh" or "en"
     language: str = "auto"
+    # 1.3.0 (D74): a Collections address or file; empty: not used
+    collections_url: str = ""
+
+    @property
+    def collections_source(self) -> str | None:
+        """What scans and backups read Collections from, or ``None``."""
+        return self.collections_url.strip() or None
 
     def to_dict(self) -> dict[str, Any]:
         return {"format_version": SETTINGS_VERSION, **dataclasses.asdict(self)}

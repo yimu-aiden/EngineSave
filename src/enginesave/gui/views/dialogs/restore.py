@@ -96,6 +96,11 @@ class RestoreDialog(Dialog):
         ttk.Label(top, text=hint, wraplength=900).grid(row=3, column=1, columnspan=2, sticky="w")
         self.sources_frame = ttk.Frame(top)
         self.sources_frame.grid(row=4, column=0, columnspan=3, sticky="w", pady=(PAD, 0))
+        # 1.3.0 (D74): a newer version whose saves are kept under another name
+        self.retarget = tk.BooleanVar(value=False)
+        ttk.Checkbutton(top, text=_(state.RETARGET_LABEL), variable=self.retarget).grid(
+            row=5, column=0, columnspan=3, sticky="w", pady=(4, 0)
+        )
         ttk.Label(
             body,
             text=_(
@@ -121,6 +126,7 @@ class RestoreDialog(Dialog):
         ttk.Label(body, textvariable=self.result, wraplength=940).pack(anchor="w", pady=(PAD, 0))
         self.watch(self.game_root, lambda: self.schedule_preview(TYPING_MS))
         self.watch(self.tokens, self.schedule_preview)
+        self.watch(self.retarget, self.schedule_preview)
         self.button(_("关闭"), self.cancel, action=False)
         self.restore_button = self.primary(_("恢复"), self.restore)
         self.snapshot_changed()
@@ -227,6 +233,10 @@ class RestoreDialog(Dialog):
         )
         repo, game_id, generation = self.repo, self.game_id, self.generation
         report = self.app.report  # D39: installs the last scan found are candidates too
+        typed = self.game_root.get().strip()
+        if self.retarget.get() and typed:  # 1.3.0 (D74): the version named, never the default
+            options["game_root"] = Path(typed)
+            options["retarget"] = True
 
         def job(_progress: Callable[[Any], None]) -> tuple[int, RestorePlan]:
             from enginesave.restore import plan_restore
@@ -245,7 +255,10 @@ class RestoreDialog(Dialog):
 
     def preview_failed(self, generation: int, exc: BaseException) -> None:
         if generation == self.generation:
-            self.result.set(_("无法预览：{exc}", exc=exc))
+            text = _("无法预览：{exc}", exc=exc)
+            if "--retarget" in str(exc) and not self.retarget.get():  # 1.3.0 (D74)
+                text += _(state.RETARGET_HINT)
+            self.result.set(text)
             log.info(_("恢复预览没有完成：%s"), exc)
 
     def show_plan(self, value: tuple[int, RestorePlan]) -> None:

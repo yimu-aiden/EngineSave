@@ -451,6 +451,7 @@ def test_blank_settings_are_written_and_read_back(tmp_path: Path) -> None:
         "mirror_verify": True,
         "scan_excludes": [],  # 0.10.0 (D63): not carried over
         "language": "auto",  # 0.11.0 (D68 2): Windows' display language again
+        "collections_url": "",  # 1.3.0 (D74): not used until set
     }
     loaded, note = load_settings(path)
     assert note is None and loaded == blank_settings(used) and loaded.override_path is None
@@ -481,12 +482,12 @@ def test_override_notice_and_first_run_guidance() -> None:
 def test_banner_after_a_scan_and_next_steps_after_a_backup(report: ScanReport) -> None:
     ready = GuiSettings(repo_path="E:\\library", scan_roots=["E:\\Games"])
     assert state.guidance(ready, report, (2, 1)) == (  # S-131: the orphans go along
-        "已勾选 2 款游戏、1 个孤立目录，点击「备份已勾选项」直接开始，或「预览…」先看将复制的内容。"
+        "已勾选 2 款游戏、1 个孤立目录，点「备份…」看要复制的内容，再点「备份」开始。"
     )
-    assert state.guidance(ready, report, (2, 0)).startswith("已勾选 2 款游戏，点击")
+    assert state.guidance(ready, report, (2, 0)).startswith("已勾选 2 款游戏，点「备份…」")
     assert state.guidance(ready, report, (0, 1)).startswith("已勾选 0 款游戏、1 个孤立目录")
-    assert "备份已勾选项" in state.guidance(ready, report, (0, 0))
-    assert "5. 点「备份已勾选项」" in state.guidance(GuiSettings())
+    assert "备份…" in state.guidance(ready, report, (0, 0))
+    assert "5. 点「备份…」" in state.guidance(GuiSettings())
     assert state.guidance(ready, report, (0, 0)).startswith("还没有勾选")
     empty = ScanReport(2, "0", "2026-10-24T00:00:00Z", [], "E:\\RenPy")
     assert state.guidance(ready, empty, (0, 0)) is None, "nothing was found"

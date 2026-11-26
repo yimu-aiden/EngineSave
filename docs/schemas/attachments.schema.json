@@ -1,0 +1,134 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "enginesave/attachments.schema.json",
+  "title": "enginesave attachments list|add|open|merge --json",
+  "description": "1.3.0 (D76, D77): a record's 附件 (attachments) folder, games\\<record folder>\\附件. One shape per action.",
+  "$defs": {
+    "works": { "type": "array", "items": { "type": "string" }, "description": "the Collections works the record keeps" },
+    "list": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["game_id", "folder", "exists", "entries", "file_count", "total_bytes", "approximate", "collections_work_ids"],
+      "properties": {
+        "game_id": { "type": ["string", "null"], "description": "null: --game collections:<id> that no record keeps yet" },
+        "folder": { "type": ["string", "null"], "description": "absolute; given also when it is not created yet; null with game_id null" },
+        "exists": { "type": "boolean" },
+        "entries": {
+          "type": "array",
+          "description": "what is directly in the folder, by name; links and junctions are left out",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["name", "kind", "bytes"],
+            "properties": {
+              "name": { "type": "string" },
+              "kind": { "enum": ["file", "dir"] },
+              "bytes": { "type": "integer", "description": "a folder: everything below it" }
+            }
+          }
+        },
+        "file_count": { "type": "integer", "description": "every file below the folder" },
+        "total_bytes": { "type": "integer" },
+        "approximate": { "type": "boolean", "description": "the walk stopped after 20000 entries: the counts are at least these" },
+        "collections_work_ids": { "$ref": "#/$defs/works" }
+      }
+    },
+    "add": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["game_id", "folder", "saved", "failed", "created_record", "collections_work_ids"],
+      "properties": {
+        "game_id": { "type": "string" },
+        "folder": { "type": "string" },
+        "created_record": { "type": "boolean", "description": "D77: --game collections:<id> --title made an attachment-only record now" },
+        "collections_work_ids": { "$ref": "#/$defs/works" },
+        "saved": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["source", "name", "bytes"],
+            "properties": {
+              "source": { "type": "string", "description": "the file given" },
+              "name": { "type": "string", "description": "its name in the folder: cleaned for Windows, numbered ' (2)' when taken" },
+              "bytes": { "type": "integer" }
+            }
+          }
+        },
+        "failed": {
+          "type": "array",
+          "description": "files not added (exit code 1); nothing partial is left, and with --move the original stays",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["source", "error"],
+            "properties": {
+              "source": { "type": "string" },
+              "error": { "type": "string" }
+            }
+          }
+        }
+      }
+    },
+    "open": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["game_id", "folder", "created_record", "collections_work_ids"],
+      "properties": {
+        "game_id": { "type": "string" },
+        "folder": { "type": "string", "description": "the folder opened (created when missing)" },
+        "created_record": { "type": "boolean" },
+        "collections_work_ids": { "$ref": "#/$defs/works" }
+      }
+    },
+    "merge": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["from", "into", "moved", "failed"],
+      "properties": {
+        "from": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["game_id", "removed", "snapshots"],
+          "properties": {
+            "game_id": { "type": "string" },
+            "removed": { "type": "boolean", "description": "the record had no snapshots and is gone; else it stays, without works" },
+            "snapshots": { "type": "integer" }
+          }
+        },
+        "into": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["game_id", "folder", "collections_work_ids"],
+          "properties": {
+            "game_id": { "type": "string" },
+            "folder": { "type": "string" },
+            "collections_work_ids": { "$ref": "#/$defs/works" }
+          }
+        },
+        "moved": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["from", "name"],
+            "properties": {
+              "from": { "type": "string", "description": "its name in the record merged from" },
+              "name": { "type": "string", "description": "its name now (numbered ' (2)' when taken)" }
+            }
+          }
+        },
+        "failed": {
+          "type": "array",
+          "description": "entries not moved (exit code 1); then the record merged from keeps its works and stays",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["name", "error"],
+            "properties": { "name": { "type": "string" }, "error": { "type": "string" } }
+          }
+        }
+      }
+    }
+  }
+}

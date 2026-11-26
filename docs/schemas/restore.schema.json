@@ -78,6 +78,20 @@
         "from_install": {
           "type": ["string", "null"],
           "description": "1.2.0 (D73 15): with --game-root, the install folder the restored local saves were backed up from (chosen by --from-install, or the snapshot's from_install, when it holds several installs' local saves); null when no single local source is restored"
+        },
+        "retargeted": {
+          "type": "array",
+          "description": "1.3.0 (D74): with --retarget, the sources moved to the places the version in --game-root keeps its saves (e.g. a new Ren'Py save directory); empty otherwise",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["source_id", "from", "to"],
+            "properties": {
+              "source_id": { "type": "string" },
+              "from": { "type": "string", "description": "relative_root the snapshot recorded" },
+              "to": { "type": "string", "description": "relative_root it is restored to" }
+            }
+          }
         }
       }
     },
@@ -103,6 +117,10 @@
         "registered_install": {
           "type": ["string", "null"],
           "description": "0.7.0 (D43): the game folder the local saves went into, now recorded as an install of the record"
+        },
+        "linked": {
+          "type": ["string", "null"],
+          "description": "1.3.0 (D74): after --retarget, the game folder now linked to the record (link_root), so its later backups go into it; null otherwise"
         }
       }
     }
