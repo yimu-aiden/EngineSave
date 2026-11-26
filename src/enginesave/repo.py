@@ -32,6 +32,7 @@ from enginesave import layout
 from enginesave.errors import FatalError, UsageError
 from enginesave.fsutil import (
     atomic_write_text,
+    is_reparse_point,
     iso_from_ns,
     iso_utc,
     long_path,
@@ -285,6 +286,31 @@ def destination_state(dest: Path) -> str:
             f"into it: {dest}"
         )
     return "new"
+
+
+WORK_PREFIX = "collections:"  # 1.3.0 (D77): --game collections:<work id>
+WORK_ID_RE = re.compile(r"^[\w.:-]{1,128}$")
+
+
+def work_ref(ref: str) -> str | None:
+    """The Collections work id of a ``--game collections:<work id>``, else ``None``."""
+    if not ref.casefold().startswith(WORK_PREFIX):
+        return None
+    work = ref[len(WORK_PREFIX) :].strip()
+    if not WORK_ID_RE.match(work):
+        raise UsageError(f"--game {ref!r}: not a Collections work id")
+    return work
+
+
+def add_work_id(doc: dict, work_id: str) -> bool:
+    """Record that ``doc`` keeps the Collections work ``work_id``; ``True`` when it is new."""
+    ids = doc.get("collections_work_ids")
+    ids = [i for i in ids if isinstance(i, str)] if isinstance(ids, list) else []
+    if work_id in ids:
+        doc["collections_work_ids"] = ids
+        return False
+    doc["collections_work_ids"] = [*ids, work_id]
+    return True
 
 
 def remove_tree(path: Path) -> list[str]:
@@ -605,11 +631,21 @@ class Repo:
     def taken_folder_names(self, but: str | None = None) -> set[str]:
         """Every name under ``games/`` and every folder a record has or was given (case-folded),
         except the folder of record ``but``."""
+        from enginesave.attachments import only_attachments
+
         folders = {**self._known_folders(), **self._pending}  # a pending one replaces its own
         names = {f.casefold() for f in folders.values()}
         games = self.root / GAMES_DIR
         with contextlib.suppress(OSError):
-            names |= {p.name.casefold() for p in games.iterdir()} if games.is_dir() else set()
+            names |= (
+                {  # 1.3.0 (D76): the 附件 a removed record left go to the next of that name
+                    p.name.casefold()
+                    for p in games.iterdir()
+                    if not (p.name.casefold() not in names and only_attachments(p))
+                }
+                if games.is_dir()
+                else set()
+            )
         if but is not None:
             names.discard(self.folder_name(but).casefold())
         return names
@@ -1000,13 +1036,36 @@ class Repo:
     def orphan_game_dirs(self) -> list[Path]:
         """Folders under ``games/`` that no catalog record names, e.g. left by a removal that
         was interrupted after the catalog was written (D49): reported, never removed."""
-        ids = {r.get("game_id") for r in self.load_catalog()["games"] if isinstance(r, dict)}
-        return [path for owner, path in self.record_folders() if owner not in ids]
+        from enginesave.attachments import only_attachments
 
-    def remove_game(self, game_id: str) -> list[str]:
+        ids = {r.get("game_id") for r in self.load_catalog()["games"] if isinstance(r, dict)}
+        return [
+            path
+            for owner, path in self.record_folders()
+            if owner not in ids and not only_attachments(path)  # 1.3.0 (D76): kept 附件
+        ]
+
+    def kept_attachments(self) -> list[Path]:
+        """1.3.0 (D76): record folders that hold only the ``附件`` a removed record left; a
+        new record named like the folder takes them over."""
+        from enginesave.attachments import only_attachments
+
+        ids = {r.get("game_id") for r in self.load_catalog()["games"] if isinstance(r, dict)}
+        return [
+            path
+            for owner, path in self.record_folders()
+            if owner not in ids and only_attachments(path)
+        ]
+
+    def remove_game(self, game_id: str, *, with_attachments: bool = False) -> list[str]:
         """Remove a whole record (D49 2): its catalog entry and every override of it first,
-        then its snapshot folders, then its folder. Returns what could not be removed."""
+        then its snapshot folders, then its folder. Returns what could not be removed.
+
+        1.3.0 (D76): the record's ``附件`` folder stays (the record folder then holds only it)
+        unless ``with_attachments``."""
         self.require_writable()
+        from enginesave.attachments import ATTACHMENTS_DIR
+
         folder = self.game_dir(game_id)
         snapshots = [folder / SNAPSHOTS_DIR / sid for sid in self.folder_snapshot_ids(folder)]
         catalog = self.load_catalog()
@@ -1016,7 +1075,18 @@ class Repo:
         leftovers: list[str] = []
         for snapshot in snapshots:
             leftovers += remove_tree(snapshot)
-        leftovers += remove_tree(folder)
+        kept = folder / ATTACHMENTS_DIR
+        if with_attachments or not kept.is_dir() or is_reparse_point(kept):
+            leftovers += remove_tree(folder)
+            return leftovers
+        with contextlib.suppress(OSError):
+            for path in list(folder.iterdir()):
+                if path.name == ATTACHMENTS_DIR:
+                    continue
+                if path.is_dir() and not is_reparse_point(path):
+                    leftovers += remove_tree(path)
+                elif not _remove_file(path):
+                    leftovers.append(str(path))
         return leftovers
 
     def remove_snapshots(self, game_id: str, snapshot_ids: Iterable[str]) -> list[str]:
@@ -1109,11 +1179,26 @@ class Repo:
     # ------------------------------------------------------------------------- references
 
     def resolve_game(self, catalog: dict, ref: str) -> dict:
-        """Catalog record for ``ref``: game id, unique id prefix (>= 6), save directory or name."""
+        """Catalog record for ``ref``: game id, unique id prefix (>= 6), save directory or name;
+        1.3.0: also the record's folder under ``games\\`` and a game folder the record knows
+        (one of its installs, or a folder linked to it); ``collections:<work id>`` is the record
+        that keeps that Collections work (D77)."""
         records = [r for r in catalog["games"] if isinstance(r, dict) and "game_id" in r]
         exact = [r for r in records if r["game_id"] == ref]
         if exact:
             return exact[0]
+        work = work_ref(ref)
+        if work is not None:  # 1.3.0 (D77)
+            found = self.records_of_work(catalog, work)
+            if len(found) == 1:
+                return found[0]
+            if found:
+                ids = ", ".join(f"{r['game_id']} ({r.get('display_name') or '?'})" for r in found)
+                raise UsageError(
+                    f"--game {ref!r}: several records keep this work ({ids}); merge them with "
+                    "`enginesave attachments merge`"
+                )
+            raise UsageError(f"no record keeps the Collections work {work!r} in {self.root}")
         lowered = ref.casefold()
         tests = [
             lambda r: len(ref) >= 6 and r["game_id"].startswith(lowered),
@@ -1122,15 +1207,61 @@ class Repo:
                 == lowered
             ),
             lambda r: str(r.get("display_name") or "").casefold() == lowered,
+            lambda r: not self.old_format and self.folder_name(r["game_id"]).casefold() == lowered,
         ]
+        if os.path.isabs(ref):
+            tests.append(lambda r: r["game_id"] in self._records_at(catalog, ref))
         for test in tests:
             matches = [r for r in records if test(r)]
             if len(matches) == 1:
                 return matches[0]
             if len(matches) > 1:
-                ids = ", ".join(r["game_id"] for r in matches)
+                ids = ", ".join(f"{r['game_id']} ({r.get('display_name') or '?'})" for r in matches)
                 raise UsageError(f"--game {ref!r} is ambiguous; use one of: {ids}")
-        raise UsageError(f"no game matches {ref!r} in {self.root}")
+        raise UsageError(
+            f"no game matches {ref!r} in {self.root}; give the record's id, name, folder under "
+            "games\\ or a game folder it knows (`enginesave list --repo ...` lists them)"
+        )
+
+    def records_of_work(self, catalog: dict, work_id: str) -> list[dict]:
+        """1.3.0 (D77): the catalog records whose ``collections_work_ids`` hold ``work_id``
+        (the catalog says it; a record whose entry does not is read from its game.json)."""
+        found = []
+        for record in catalog["games"]:
+            if not isinstance(record, dict) or not isinstance(record.get("game_id"), str):
+                continue
+            ids = record.get("collections_work_ids")
+            if ids is None and self.has_game(record["game_id"]):
+                with contextlib.suppress(FatalError):
+                    ids = self.load_game(record["game_id"]).get("collections_work_ids")
+            if isinstance(ids, list) and work_id in ids:
+                found.append(record)
+        return found
+
+    def _records_at(self, catalog: dict, folder: str) -> set[str]:
+        """The records that know the game folder ``folder``: an install, or a ``link_root``."""
+        wanted = path_key(folder)
+        found = {
+            str(o.get("game_id"))
+            for o in catalog.get("overrides", [])
+            if o.get("type") == "link_root"
+            and o.get("game_root")
+            and path_key(o["game_root"]) == wanted
+        }
+        for record in catalog["games"]:
+            game_id = record.get("game_id") if isinstance(record, dict) else None
+            if not isinstance(game_id, str) or not self.has_game(game_id):
+                continue
+            with contextlib.suppress(FatalError):
+                installs = self.load_game(game_id).get("installs") or []
+                if any(
+                    isinstance(i, dict)
+                    and i.get("game_root")
+                    and path_key(i["game_root"]) == wanted
+                    for i in installs
+                ):
+                    found.add(game_id)
+        return found
 
     def snapshot_summary(self, game_id: str, snapshot_id: str) -> dict[str, Any]:
         """One line of ``show``: reason, status, counts; ``status="unreadable"`` on damage."""

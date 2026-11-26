@@ -25,11 +25,31 @@ STOPPED = "已取消"  # D58: the verify table's last row when it was stopped
 NOT_VERIFIED = "其余的快照没有校验"
 NO_MATCH = "无匹配"
 SEARCH_PLACEHOLDER = "搜索游戏…"
+MORE_MENU = "更多"  # 1.3.0: export, import, mirror (the button draws its own arrow)
 # D47, D51: the 「类型」 column in Chinese, the kind of record and nothing else
 KIND_TEXTS = {"game": "游戏", "unlinked": "孤立目录"}
 WIDEST_KIND = KIND_TEXTS["unlinked"]  # the 「类型」 column fits this
 
 # ---------------------------------------------------------------------------- library
+
+
+def attachments_start_folder(doc: dict[str, Any]) -> Path | None:
+    """1.3.0 (D76): where 「添加附件…」 opens: the game's own folder -- the install seen most
+    recently that is on disk now; ``None`` when none is (the dialog's own default)."""
+    installs = [i for i in doc.get("installs") or [] if isinstance(i, dict) and i.get("game_root")]
+    installs.sort(key=lambda i: str(i.get("last_seen") or ""), reverse=True)
+    for install in installs:
+        root = Path(str(install["game_root"]))
+        if root.is_absolute() and root.is_dir():
+            return root
+    return None
+
+
+def attachments_text(files: int, total: int) -> str:
+    """1.3.0 (D76): the selected record's 附件 below its snapshots."""
+    if not files:
+        return _("附件：没有")
+    return _("附件：{n} 个文件，{size}", n=files, size=size_text(total))
 
 
 @dataclass(frozen=True)

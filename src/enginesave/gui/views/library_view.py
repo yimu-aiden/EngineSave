@@ -17,8 +17,8 @@ import logging
 import tkinter as tk
 from collections.abc import Callable
 from pathlib import Path
+from tkinter import filedialog, messagebox, ttk
 from tkinter import font as tkfont
-from tkinter import messagebox, ttk
 from typing import TYPE_CHECKING, Any
 
 from enginesave.errors import EngineSaveError
@@ -146,27 +146,56 @@ class LibraryView(ttk.Frame):
         self.record_menus = RowMenus(self.record_tree, self.record_menu)
         panes.add(left, weight=2)
         right = ttk.LabelFrame(panes, text=_("快照（最新在上）"), padding=4)
+        # 1.3.0 (D76): the selected record's 附件, below its snapshots
+        held = ttk.Frame(right)
+        held.pack(side="bottom", fill="x", pady=(4, 0))
+        self.attachments_text = tk.StringVar(value="")
+        ttk.Label(held, textvariable=self.attachments_text).pack(side="left")
+        add_button = ttk.Button(held, text=_("添加附件…"), command=self.add_attachments)
+        add_button.pack(side="right")
+        app.register_action(add_button, lambda: self.selected_record() is not None)
+        open_button = ttk.Button(held, text=_("打开附件文件夹"), command=self.open_attachments)
+        open_button.pack(side="right", padx=(0, 4))
+        app.register_action(open_button, lambda: self.selected_record() is not None)
         self.snapshot_tree = make_tree(right, SNAPSHOT_COLUMNS, height=8)
         self.snapshot_tree.configure(selectmode="browse")
         panes.add(right, weight=3)
         self.record_tree.bind("<<TreeviewSelect>>", lambda _e: self.record_selected())
 
         writes = self.writable  # D67 8: not in a library of format 1 (read-only)
+        # 1.3.0: no 「刷新」 (the library is read again after every change; F5 here reads it)
         for text, command, when in (
-            (_("刷新"), self.reload, self.has_library),
             (_("校验"), self.verify, self.has_targets),
             (_("恢复…"), self.restore, lambda: self.selected_record() is not None and writes()),
-            (_("导出…"), self.export, self.has_targets),
-            (_("导入…"), self.import_archives, lambda: self.has_library() and writes()),
             (_("清理…"), self.cleanup, lambda: self.has_targets() and writes()),
             (_("删除…"), self.remove, lambda: self.has_targets() and writes()),  # 0.8.0 (D49)
-            (_("镜像到…"), self.mirror, self.has_library),  # 0.9.0 (D57)
         ):
             button = ttk.Button(bar, text=text, command=command)
             button.pack(side="left", padx=(0, PAD))
             app.register_action(button, when)
+        # 1.3.0: what is used now and then, behind one button
+        self.more_items = [
+            (_("导出…"), self.export, self.has_targets),
+            (_("导入…"), self.import_archives, lambda: self.has_library() and writes()),
+            (_("镜像到…"), self.mirror, self.has_library),  # 0.9.0 (D57)
+        ]
+        self.more_button = ttk.Menubutton(bar, text=_(state.MORE_MENU))
+        self.more_menu = tk.Menu(self.more_button, tearoff=False, postcommand=self.refresh_more)
+        for text, command, _when in self.more_items:
+            self.more_menu.add_command(label=text, command=command)
+        self.more_button.configure(menu=self.more_menu)
+        self.more_button.pack(side="left", padx=(0, PAD))
+        app.register_action(self.more_button, self.has_library)
         ttk.Label(self, text=_(HINT), wraplength=1100).pack(side="bottom", anchor="w", before=bar)
         self.refresh_checks()
+
+    def refresh_more(self) -> None:
+        """「更多 ▾」's entries, each available as its button was, when the menu opens."""
+        busy = self.app.runner.busy
+        for index, (_text, _command, when) in enumerate(self.more_items):
+            self.more_menu.entryconfigure(
+                index, state="normal" if when() and not busy else "disabled"
+            )
 
     # ------------------------------------------------------------------------------ loading
 
@@ -336,6 +365,7 @@ class LibraryView(ttk.Frame):
         self.snapshot_tree.delete(*self.snapshot_tree.get_children())
         self.snapshots = {}
         self.app.refresh_actions()
+        self.show_attachments()
         row = self.selected_record()
         if row is None or self.repo is None:
             return
@@ -701,3 +731,78 @@ class LibraryView(ttk.Frame):
         row = self.records.get(iid)
         if row is not None and self.repo is not None:
             self.app.open_folder(self.repo.game_dir(row.game_id))
+
+    # ------------------------------------------------------------------- 附件 (1.3.0, D76)
+
+    def show_attachments(self) -> None:
+        """「附件：N 个文件，大小」 of the selected record (read when it is selected)."""
+        row, repo = self.selected_record(), self.repo
+        if row is None or repo is None:
+            self.attachments_text.set("")
+            return
+        from enginesave.attachments import listing
+
+        try:
+            found = listing(row.game_id, repo.game_dir(row.game_id))
+        except EngineSaveError as exc:
+            self.attachments_text.set(_("附件：读不出（{exc}）", exc=exc))
+            return
+        self.attachments_text.set(state.attachments_text(found.file_count, found.total_bytes))
+
+    def open_attachments(self) -> None:
+        """「打开附件文件夹」: the record's 附件 folder, created when it is not there yet."""
+        row, repo = self.selected_record(), self.repo
+        if row is None or repo is None:
+            return
+        from enginesave.attachments import ensure_folder
+
+        try:
+            folder = ensure_folder(repo.game_dir(row.game_id))
+        except EngineSaveError as exc:
+            self.app.show_error(exc)
+            return
+        self.app.open_folder(folder)
+
+    def add_attachments(self) -> None:
+        """「添加附件…」: copy the files chosen into the record's 附件 folder."""
+        row, repo = self.selected_record(), self.repo
+        if row is None or repo is None:
+            return
+        try:  # the game's own folder first: patches and guides usually lie beside it
+            start = state.attachments_start_folder(repo.load_game(row.game_id))
+        except EngineSaveError:
+            start = None
+        chosen = filedialog.askopenfilenames(
+            parent=self.app.root,
+            title=_("选择要放进附件的文件：{name}", name=row.name),
+            **({"initialdir": str(start)} if start is not None else {}),
+        )
+        if not chosen:
+            return
+        files = [Path(p) for p in chosen]
+        record_folder = repo.game_dir(row.game_id)
+
+        def job(_progress: Callable[[Any], None]) -> Any:
+            from enginesave.attachments import add
+
+            added = add(record_folder, files)
+            if added.saved:
+                from enginesave import layout
+
+                layout.write_index(repo)
+            return added
+
+        def done(added: Any) -> None:
+            for saved in added.saved:
+                log.info(_("已放进附件：%s"), Path(added.folder) / saved["name"])
+            for failed in added.failed:
+                log.warning(_("没有放进附件：%s（%s）"), failed["source"], failed["error"])
+            if added.failed:
+                messagebox.showwarning(
+                    _("添加附件"),
+                    _("{n} 个文件没有放进附件，原因见日志。", n=len(added.failed)),
+                    parent=self.app.root,
+                )
+            self.show_attachments()
+
+        self.app.run(_("添加附件"), job, done, status=_("正在复制附件…"), lock=repo.root)

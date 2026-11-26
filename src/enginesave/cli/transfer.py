@@ -57,6 +57,11 @@ def cmd_export(args: argparse.Namespace) -> int:
     dest = Path(os.path.abspath(args.to))
     if dest.is_dir():
         dest = dest / default_export_name(str(record.get("display_name") or ""), snapshot_id)
+    elif dest.suffix.casefold() != ".zip":  # 1.3.0: a folder was meant, not a file without .zip
+        raise UsageError(
+            f"--to {dest}: no such folder, and not a .zip file name; give FILE.zip, or create "
+            "the folder first"
+        )
     result = export_snapshot(
         repo,
         game_id,

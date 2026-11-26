@@ -99,7 +99,7 @@ FIRST_STEPS = (
     "添加扫描根目录：点“添加…”选择存放游戏的文件夹。",
     "点“扫描”（只读，也可以按 F5）。",
     "在“勾选”列勾上要备份的游戏（已确认的游戏默认已勾）。",
-    "点「备份已勾选项」直接开始备份（想先看清会复制什么，点「预览…」）。",
+    "点「备份…」，看过要复制的内容后点「备份」。",
     "到“备份库”页点“全选”再点“校验”，确认全部 OK。",
 )
 DONE_MARK, NEXT_MARK = "✔", "→"
@@ -129,8 +129,11 @@ def guidance(
     games, unlinked = checked  # orphaned folders ticked in their dialog go along (D42)
     if games or unlinked:
         what = checked_text(games, unlinked)
-        return _("{what}，点击「备份已勾选项」直接开始，或「预览…」先看将复制的内容。", what=what)
-    return _("还没有勾选：在“勾选”列勾上要备份的游戏，再点击「备份已勾选项」。")
+        return _("{what}，点「备份…」看要复制的内容，再点「备份」开始。", what=what)
+    return _("还没有勾选：在“勾选”列勾上要备份的游戏，再点「备份…」。")
+
+
+BACKUP_BUTTON = "备份…"  # 1.3.0: the scan page's one backup button (the preview first)
 
 
 def backup_plan_lines(plan: BackupPlan) -> list[str]:

@@ -9,6 +9,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from enginesave import __version__
+from enginesave.collections_link import CollectionsUnavailable, Works, unavailable
+from enginesave.collections_link import annotate as annotate_collections
+from enginesave.collections_link import load as load_collections
 from enginesave.discovery import DEFAULT_MAX_DEPTH, DiscoveryResult, discover
 from enginesave.engines import default_detectors
 from enginesave.engines.base import Detector, ScanContext, game_status
@@ -22,7 +25,7 @@ from enginesave.fsutil import (
     utc_now,
     walk_files,
 )
-from enginesave.identity import annotate_known_games
+from enginesave.identity import annotate_known_games, apply_confirmed_sources
 from enginesave.installs import complete_installs
 from enginesave.models import (
     FORMAT_VERSION,
@@ -54,6 +57,23 @@ class ScanOptions:
     should_stop: StopCheck = None  # 0.9.0 (D58): asked between folders
     # 1.2.0 (D73 8): told (folders looked at so far, the folder) before each folder
     progress: Callable[[int, str], None] | None = None
+    # 1.3.0 (D74): a Collections address or file (or the copies already read): one game's
+    # versions are kept in one record
+    collections: str | Works | None = None
+
+
+def read_collections(source: str | Works | None) -> tuple[Works | None, dict | None]:
+    """``(copies, report.collections)`` of a scan's Collections source; a source that cannot
+    be read gives no copies and says why (a warning: the scan goes on without it)."""
+    if source is None:
+        return None, None
+    if isinstance(source, Works):
+        return source, source.summary()
+    try:
+        works = load_collections(source)
+    except CollectionsUnavailable as exc:
+        return None, unavailable(source, str(exc))
+    return works, works.summary()
 
 
 def compare_by_hash(local_dir: Path, mirror_dir: Path) -> tuple[int, int]:
@@ -127,18 +147,28 @@ def run_scan(options: ScanOptions) -> ScanReport:
             games = detector.finalize(games, ctx)
         games.sort(key=lambda g: path_key(g.game_root))
         known: list[dict] = []
+        overrides: list[dict] = []
         if options.repo is not None:
             repo = Repo.open(options.repo)
             catalog = repo.load_catalog()
-            known = repo.known_games(catalog)
-            annotate_known_games(games, known, catalog["overrides"])
+            known, overrides = repo.known_games(catalog), catalog["overrides"]
+            annotate_known_games(games, known, overrides)
         for game in games:
-            game.status = game_status(game)
             # 1.2.0 (D73 6, 7, 13): every install, fully described
             complete_installs(game, ctx.memo.get("listings"))
+        works, collections = read_collections(options.collections)
+        if works is not None:  # 1.3.0 (D74): after the 6.6 rules, only where they found none
+            annotate_collections(games, works, known, overrides)
+            for game in games:
+                if game.collections and game.collections.get("record_by") == "collections":
+                    apply_confirmed_sources(game, overrides)
+        for game in games:
+            game.status = game_status(game)
 
         saves_root, _ = default_saves_root(options.env, options.saves_root_override)
         warnings = list(found.warnings)
+        if collections is not None and collections.get("error"):
+            warnings.append(f"Collections not used: {collections['error']}")
         unlinked = []
         if options.include_unlinked:
             unlinked, root_warnings = list_unlinked(saves_root, games, known)
@@ -160,4 +190,5 @@ def run_scan(options: ScanOptions) -> ScanReport:
         skipped=found.skipped,
         warnings=warnings,
         timing=timing(found, time.perf_counter() - started),
+        collections=collections,
     )

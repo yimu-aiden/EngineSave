@@ -30,7 +30,7 @@ if TYPE_CHECKING:
 
 
 class BackupPreviewDialog(Dialog):
-    """What a backup would copy (the 「预览…」 button); [开始备份] is the CLI's ``--yes``."""
+    """What a backup would copy (the scan page's 「备份…」); [备份] is the CLI's ``--yes``."""
 
     def __init__(self, app: App, plan: BackupPlan, on_start: Callable[[BackupPlan], None]) -> None:
         super().__init__(app, _("备份预览"), min_size=(1000, 520))
@@ -96,7 +96,7 @@ class BackupPreviewDialog(Dialog):
             box.insert("end", line)
         box.pack(fill="x")
         self.button(_("取消"), self.cancel, action=False)
-        self.start_button = self.primary(_("开始备份"), self.start)
+        self.start_button = self.primary(_("备份"), self.start)
         self.show()
 
     def start(self) -> None:

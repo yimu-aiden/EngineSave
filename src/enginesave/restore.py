@@ -118,6 +118,11 @@ class RestorePlan:
     shared_with: list[str] = field(default_factory=list)
     # 1.2.0 (D73 15): the install whose local saves were chosen among several, if so
     from_install: str | None = None
+    # 1.3.0 (D74): with --retarget, the sources moved to the target version's places
+    retargeted: list[dict[str, Any]] = field(default_factory=list)
+    # 1.3.0 (D74): the target is a version of this game kept under another name: once
+    # restored, this folder is linked to the record (later backups go on into it)
+    relink: Path | None = None
 
     @property
     def includes_tokens(self) -> bool:
@@ -136,6 +141,7 @@ class RestorePlan:
             "shared_with": list(self.shared_with),
             "targets": [t.to_dict() for t in self.targets],
             "from_install": self.from_install,  # 1.2.0 (D73 15)
+            "retargeted": list(self.retargeted),  # 1.3.0 (D74)
         }
 
 
@@ -145,6 +151,7 @@ class RestoreResult:
     failures: list[dict[str, Any]] = field(default_factory=list)
     safety_snapshot: str | None = None
     registered_install: str | None = None  # 0.7.0 (D43): the game folder now an install
+    linked: str | None = None  # 1.3.0 (D74): the folder --retarget linked to the record
 
     @property
     def exit_code(self) -> int:
@@ -157,6 +164,7 @@ class RestoreResult:
             "safety_snapshot": self.safety_snapshot,
             "note": None if self.failures else LOAD_NOTE,
             "registered_install": self.registered_install,
+            "linked": self.linked,
         }
 
 
@@ -367,12 +375,39 @@ def find_install(
     return None
 
 
+def _saves_places(sources: Sequence[Mapping[str, Any]]) -> set[tuple[str, str]]:
+    """``(root token, relative root)`` of the sources kept outside a game folder."""
+    return {
+        (str(s.get("root_token")), os.path.normcase(str(s.get("relative_root") or "")))
+        for s in sources
+        if s.get("root_token") != RootToken.GAME_ROOT.value
+        and s.get("kind") != SourceKind.MACHINE_TOKENS.value
+    }
+
+
+def keeps_snapshot_saves(game: DetectedGame, snapshot_sources: Sequence[Mapping[str, Any]]) -> bool:
+    """1.3.0 (D74): the game at the target keeps its saves exactly where the snapshot's saves
+    outside the game folder go back to: the snapshot is this game's, whatever the record's
+    identity says (a record a newer version was linked to holds both versions' snapshots)."""
+    wanted = _saves_places(snapshot_sources)
+    theirs = _saves_places([s.to_dict() for s in game.sources])
+    return bool(wanted) and wanted <= theirs
+
+
+RETARGET_HINT = (
+    "if it is a newer version of this game that keeps its saves under another name, add "
+    "--retarget to restore into the places that version uses"
+)
+
+
 def check_game_root(
     folder: Path,
     doc: Mapping[str, Any],
     *,
     saves_root_override: Path | None = None,
     env: Mapping[str, str] | None = None,
+    snapshot_sources: Sequence[Mapping[str, Any]] = (),
+    retarget: bool = False,
 ) -> tuple[Path, str | None, str | None]:
     """What a ``--game-root`` names (plan section 21 M21): the Ren'Py game at ``folder``, or
     the only game directly inside it (the folder an archive unpacks into), never another game.
@@ -380,8 +415,35 @@ def check_game_root(
     Returns ``(install, its game version, note)``; the note says when the folder was replaced.
     Refused (exit code 2) when there is no game or several, when it is not a Ren'Py game, or
     when its save directory differs from the record's (restoring into another game).
+
+    1.3.0 (D74): a game whose save directory (or title) differs from the record's is accepted
+    when it keeps its saves where the snapshot's go (``snapshot_sources``), or with
+    ``retarget`` (another version of this game: the caller moves the saves to its places).
     """
+    root, version, note, _game, _changed = resolve_game_root(
+        folder,
+        doc,
+        saves_root_override=saves_root_override,
+        env=env,
+        snapshot_sources=snapshot_sources,
+        retarget=retarget,
+    )
+    return root, version, note
+
+
+def resolve_game_root(
+    folder: Path,
+    doc: Mapping[str, Any],
+    *,
+    saves_root_override: Path | None = None,
+    env: Mapping[str, str] | None = None,
+    snapshot_sources: Sequence[Mapping[str, Any]] = (),
+    retarget: bool = False,
+) -> tuple[Path, str | None, str | None, DetectedGame, bool]:
+    """:func:`check_game_root`, with the game found there and whether its saves are kept
+    under another name than the record's (only ever ``True`` with ``retarget``)."""
     name = doc.get("display_name") or doc.get("game_id")
+    folder = Path(os.path.abspath(folder))
     games = detect_games(folder, saves_root_override=saves_root_override, env=env)
     installs = [(path, version, game) for game in games for path, version in _install_roots(game)]
     found = "; ".join(str(path) for path, _version, _game in installs) or "none"
@@ -410,29 +472,93 @@ def check_game_root(
             )
         wanted_key = match_key(engine, doc.get("identity") or {})
         found_key = game_match_key(game)
-        if wanted_key and found_key and wanted_key != found_key:
-            raise UsageError(
-                f"{root} is {game.display_name}, not {name}; choose that game's folder"
-            )
-        return root, version, note
-    if game.status is GameStatus.UNSUPPORTED:
-        raise UsageError(f"{root} is not a Ren'Py game ({game.engine})")
-    wanted = str((doc.get("identity") or {}).get("renpy_save_directory") or "")
-    theirs = str(game.identity.renpy_save_directory or "")
-    if wanted.casefold() != theirs.casefold():
-        raise UsageError(
+        if not (wanted_key and found_key and wanted_key != found_key):
+            return root, version, note, game, False
+        mismatch = f"{root} is {game.display_name}, not {name}; choose that game's folder"
+    else:
+        if game.status is GameStatus.UNSUPPORTED:
+            raise UsageError(f"{root} is not a Ren'Py game ({game.engine})")
+        wanted = str((doc.get("identity") or {}).get("renpy_save_directory") or "")
+        theirs = str(game.identity.renpy_save_directory or "")
+        if wanted.casefold() == theirs.casefold():
+            return root, version, note, game, False
+        mismatch = (
             f"{root} is {game.display_name} (save directory {theirs or 'none'}), "
             f"not {name} (save directory {wanted or 'none'}); choose that game's folder"
         )
-    return root, version, note
+    if keeps_snapshot_saves(game, snapshot_sources):  # D74: the snapshot is this version's
+        return root, version, note, game, False
+    if retarget:
+        return root, version, note, game, True
+    raise UsageError(f"{mismatch}, or, {RETARGET_HINT}")
+
+
+def retarget_sources(
+    chosen: Sequence[dict[str, Any]], game: DetectedGame, install: Path
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[str]]:
+    """1.3.0 (D74): the snapshot's sources moved to the places ``game`` -- another version of
+    the record's game, installed at ``install`` -- keeps its saves in: each to that version's
+    one source of the same kind and root token (for local saves, the one in ``install``).
+    ``(sources, [{"source_id", "from", "to"}], notes)``; a source that version has no such
+    place for is left out with a note, one it has several for is refused."""
+    kept: list[dict[str, Any]] = []
+    moved: list[dict[str, Any]] = []
+    notes: list[str] = []
+    for entry in chosen:
+        token = entry["root_token"]
+        places = [
+            s
+            for s in game.sources
+            if s.root_token.value == token
+            and s.kind.value == entry["kind"]
+            and (
+                token != RootToken.GAME_ROOT.value
+                or (s.install_root and path_key(s.install_root) == path_key(install))
+            )
+        ]
+        same = [s for s in places if _key(s.relative_root) == _key(entry["relative_root"])]
+        local_as_before = token == RootToken.GAME_ROOT.value and not places
+        if same or local_as_before or entry["kind"] == SourceKind.MACHINE_TOKENS.value:
+            kept.append(entry)  # local saves without a place found: into the folder as before
+            continue
+        if not places:
+            notes.append(
+                f"{entry['source_id']} ({token}\\{entry['relative_root']}) is not restored: the "
+                f"version in {install} keeps no saves of that kind; its files stay in the snapshot"
+            )
+            continue
+        if len(places) > 1:
+            listed = ", ".join(f"{s.source_id}: {s.path}" for s in places)
+            raise UsageError(
+                f"--retarget: the version in {install} keeps saves of {entry['source_id']}'s kind "
+                f"in several places ({listed}); restore it with --sources and copy by hand"
+            )
+        place = places[0]
+        kept.append({**entry, "relative_root": place.relative_root})
+        moved.append(
+            {
+                "source_id": entry["source_id"],
+                "from": entry["relative_root"],
+                "to": place.relative_root,
+            }
+        )
+        notes.append(
+            f"{entry['source_id']} goes to {token}\\{place.relative_root}, where the version in "
+            f"{install} keeps its saves (backed up from {token}\\{entry['relative_root']})"
+        )
+    return kept, moved, notes
 
 
 def pick_local(
-    local: Sequence[dict[str, Any]], manifest: Mapping[str, Any], wanted: Path | None
+    local: Sequence[dict[str, Any]],
+    manifest: Mapping[str, Any],
+    wanted: Path | None,
+    target: Path | None = None,
 ) -> tuple[dict[str, Any] | None, str]:
     """D73 15: the local source of the install ``wanted`` (``--from-install``), else of the
     snapshot's ``from_install``; ``(None, "")`` when the snapshot does not name one. A
-    ``wanted`` install the snapshot has no local saves of is refused (exit code 2)."""
+    ``wanted`` install the snapshot has no local saves of is refused (exit code 2). 1.3.0:
+    else that of ``target`` (the folder restored into) when the snapshot holds its saves."""
     from enginesave.repo import from_install_of
 
     def of(folder: Path) -> dict[str, Any] | None:
@@ -457,7 +583,52 @@ def pick_local(
         pick = of(Path(recorded["game_root"]))
         if pick is not None:
             return pick, "the install the snapshot came from"
+    if target is not None:
+        pick = of(Path(os.path.abspath(target)))
+        if pick is not None:
+            return pick, "the saves of the folder restored into"
     return None, ""
+
+
+def folder_of_record(
+    repo: Repo, catalog: Mapping[str, Any], game_id: str, doc: Mapping[str, Any], folder: Path
+) -> bool:
+    """1.3.0 (D74): ``folder`` is linked to the record (``link_root``) or one of its installs,
+    or the one game folder directly inside it is (the folder an archive unpacks into)."""
+    wanted = {path_key(folder)}
+    with contextlib.suppress(OSError):
+        inside = [p for p in folder.iterdir() if p.is_dir()]
+        if len(inside) == 1:
+            wanted.add(path_key(inside[0]))
+    for override in catalog.get("overrides") or []:
+        root = override.get("game_root")
+        if (
+            override.get("type") == "link_root"
+            and override.get("game_id") == game_id
+            and root
+            and path_key(root) in wanted
+        ):
+            return True
+    return any(
+        isinstance(i, Mapping) and i.get("game_root") and path_key(i["game_root"]) in wanted
+        for i in doc.get("installs") or []
+    )
+
+
+def local_list(local: Sequence[dict[str, Any]], doc: Mapping[str, Any]) -> str:
+    """``local: D:\\Games\\Hero-0.3 (0.3); local-2: ...``: which install each came from."""
+    versions = {
+        path_key(i["game_root"]): i.get("game_version") or i.get("config_version")
+        for i in doc.get("installs") or []
+        if isinstance(i, Mapping) and i.get("game_root")
+    }
+    parts = []
+    for source in local:
+        origin = _origin_root(dict(source))
+        version = versions.get(path_key(origin)) if origin is not None else None
+        where = str(origin) if origin is not None else "?"
+        parts.append(f"{source['source_id']}: {where}" + (f" ({version})" if version else ""))
+    return "; ".join(parts)
 
 
 def _snapshot_version(doc: Mapping[str, Any], manifest: Mapping[str, Any]) -> str | None:
@@ -533,6 +704,7 @@ def plan_restore(
     env: Mapping[str, str] | None = None,
     report: ScanReport | None = None,
     from_install: Path | None = None,
+    retarget: bool = False,
 ) -> RestorePlan:
     """Work out where every selected source would be written. Nothing is written.
 
@@ -544,6 +716,12 @@ def plan_restore(
     install the snapshot came from (its manifest's ``from_install``); only without either is
     ``--sources`` needed. ``game_root`` may be any folder of this game -- one the record does
     not know, a version installed again elsewhere -- and is checked as before.
+
+    1.3.0 (D74): ``retarget`` (with ``game_root``) restores into a version of this game that
+    keeps its saves under another name (a new Ren'Py save directory, a new title): each source
+    goes to the place of the same kind that version uses (``retargeted``); a source it has no
+    such place for stays in the snapshot (a note). ``from_install`` naming an install the
+    snapshot has no local saves of is refused also when the snapshot has only one.
     """
     env = dict(os.environ) if env is None else env
     record = repo.resolve_game(catalog, game_ref)
@@ -586,11 +764,26 @@ def plan_restore(
     picked_from: str | None = None
     if from_install is not None and explicit is None:
         raise UsageError("--from-install goes with --game-root (the folder to restore into)")
+    if retarget and explicit is None:
+        raise UsageError("--retarget goes with --game-root (the version to restore into)")
+    target_game: DetectedGame | None = None
+    retargeted: list[dict[str, Any]] = []
+    changed_identity = False
     if explicit is not None:
+        if len(local) == 1 and from_install is not None:
+            # 1.3.0 (D74): asked for one install's saves, never silently given another's
+            origin = _origin_root(local[0])
+            wanted_install = Path(os.path.abspath(from_install))
+            if origin is not None and path_key(origin) != path_key(wanted_install):
+                raise UsageError(
+                    f"--from-install {wanted_install}: the snapshot has no local saves of that "
+                    f"install (it has {local[0]['source_id']}: {origin}); choose a snapshot "
+                    "made from that install"
+                )
         if len(local) > 1 and (not sources or from_install is not None):
             # 1.2.0 (D73 15): the local saves of one install -- the one asked for, else the
             # one the snapshot came from -- go into the folder given
-            pick, how = pick_local(local, manifest, from_install)
+            pick, how = pick_local(local, manifest, from_install, explicit)
             if pick is not None:
                 chosen = [s for s in chosen if s is pick or all(s is not o for o in local)]
                 local = [pick]
@@ -603,16 +796,39 @@ def plan_restore(
         if len(local) > 1:
             ids = ", ".join(s["source_id"] for s in local)
             raise UsageError(
-                f"several game-root sources ({ids}); restore one at a time with --sources, "
-                "or name the install they come from with --from-install"
+                f"several game-root sources ({ids}): {local_list(local, doc)}; restore one at a "
+                "time with --sources, or name the install they come from with --from-install"
             )
         if is_within(explicit, repo.root) or is_within(repo.root, explicit):
             raise UsageError(f"--game-root {explicit} overlaps the backup repository")
-        install, target_version, note = check_game_root(
-            explicit, doc, saves_root_override=saves_root_override, env=env
+        # 1.3.0 (D74): a folder the user tied to this record (link, or a backup that went
+        # into it) is a version of this game even when its saves are kept under another name
+        tied = folder_of_record(repo, catalog, game_id, doc, explicit)
+        install, target_version, note, target_game, changed = resolve_game_root(
+            explicit,
+            doc,
+            saves_root_override=saves_root_override,
+            env=env,
+            snapshot_sources=chosen,
+            retarget=retarget or tied,
         )
         checked = True
+        changed_identity = changed
         notes += [note] if note else []
+        if changed and tied and not retarget:
+            notes.append(
+                f"{install} keeps its saves under another name than this record; restoring into "
+                "its own places because the folder belongs to this record"
+            )
+        if changed:  # D74: the saves go where this version keeps them
+            chosen, retargeted, moved_notes = retarget_sources(chosen, target_game, install)
+            notes += moved_notes
+            local = [s for s in chosen if s["root_token"] == RootToken.GAME_ROOT.value]
+            if not chosen:
+                raise UsageError(
+                    f"nothing of snapshot {snapshot_id} can go into {install}: that version "
+                    "keeps no saves in the places the snapshot's came from"
+                )
         for s in local:
             game_bases[s["source_id"]] = (install, "--game-root")
         if picked_from is None and len(local) == 1:  # D73 15: where these saves came from
@@ -728,6 +944,8 @@ def plan_restore(
         target_version,
         shared,
         picked_from,
+        retargeted,
+        relink=install if changed_identity else None,
     )
 
 
@@ -856,8 +1074,28 @@ def execute_restore(plan: RestorePlan, *, safety_snapshot: bool = True) -> Resto
                     {"source_id": target.source_id, "path": item["path"], "error": error}
                 )
     result.registered_install = register_install(plan, result)
+    result.linked = link_version(plan, result)
     layout.write_index(plan.repo)  # D67 5: the game folder is there again
     return result
+
+
+def link_version(plan: RestorePlan, result: RestoreResult) -> str | None:
+    """1.3.0 (D74): after a ``--retarget`` restore without a failure, the version restored
+    into is linked to the record (``link_root``, 6.6 rule 6) unless its folder is linked
+    already: its saves are kept under another name, so no 6.6 rule would find the record, and
+    its next backup would start a record of its own."""
+    root = plan.relink
+    if root is None or result.failures:
+        return None
+    catalog = plan.repo.load_catalog()
+    for override in catalog["overrides"]:
+        linked = override.get("game_root")
+        if override.get("type") == "link_root" and linked and path_key(linked) == path_key(root):
+            return None
+    from enginesave.linking import link_root
+
+    link_root(plan.repo, catalog, plan.game_id, root)
+    return str(root)
 
 
 def register_install(plan: RestorePlan, result: RestoreResult) -> str | None:

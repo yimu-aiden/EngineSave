@@ -5,14 +5,23 @@ from __future__ import annotations
 
 import argparse
 import os
+import sys
 from pathlib import Path
 from typing import Any
 
 from enginesave.appdirs import config_dir
+from enginesave.attachments import listing as attachment_listing
 from enginesave.backup import register_game
-from enginesave.cli.common import STOPPED_NOTE, emit, override_from, should_stop
+from enginesave.cli.common import (
+    STOPPED_NOTE,
+    checked_report_path,
+    emit,
+    override_from,
+    should_stop,
+    write_report,
+)
 from enginesave.errors import STOPPED_EXIT_CODE, EngineSaveError, Stopped, UsageError
-from enginesave.fsutil import path_key
+from enginesave.fsutil import UnsafePathError, path_key, safe_relative_component
 from enginesave.linking import confirm_source, game_at, link_root
 from enginesave.mirror import last_mirror
 from enginesave.removal import library_stats
@@ -82,8 +91,23 @@ def cmd_list(args: argparse.Namespace) -> int:
         }
         if record.get("cleaned_at"):  # only after a cleanup (D26): older output is unchanged
             row["cleaned_at"] = record["cleaned_at"]
+        # 1.3.0: the record's folder under games\ (what the window and INDEX.txt show)
+        row["folder"] = None if repo.old_format else repo.folder_name(record["game_id"])
         doc = repo.load_game(record["game_id"])
         row["install_present"] = install_present(doc)  # D43
+        # 1.3.0 (D77): the Collections works it keeps, and what its 附件 hold
+        row["collections_work_ids"] = list(doc.get("collections_work_ids") or [])
+        try:
+            held = attachment_listing(
+                record["game_id"], repo.game_dir(record["game_id"]), limit=2000
+            )
+            row["attachments"] = {
+                "file_count": held.file_count,
+                "total_bytes": held.total_bytes,
+                "approximate": held.approximate,
+            }
+        except EngineSaveError:
+            row["attachments"] = {"file_count": 0, "total_bytes": 0, "approximate": True}
         row.update(latest_facts(repo, record["game_id"], ids[-1] if ids else None))  # D73 5
         row["installs"] = record_installs(doc)
         rows.append(row)
@@ -97,7 +121,18 @@ def cmd_list(args: argparse.Namespace) -> int:
         # 0.9.0 (D56); 1.2.0 (D73 16): where it was last mirrored to
         "stats": stats.to_dict() | {"mirror_folder": mirrored["to"] if mirrored else None},
     }
-    emit(args, render_list(data), data)
+    return emit_with_report(args, render_list(data), data)
+
+
+def emit_with_report(args: argparse.Namespace, human: str, data: dict[str, Any]) -> int:
+    """1.3.0: ``--report FILE.json`` writes the JSON there too (a large library or snapshot
+    is more than a caller may want to read from stdout); exit code 3 when it cannot be."""
+    path = checked_report_path(args, [], [Path(args.repo)])
+    problem = write_report(path, data) if path else None
+    emit(args, human, data)
+    if problem:
+        print(f"error: {problem}", file=sys.stderr)
+        return 3
     return 0
 
 
@@ -110,15 +145,28 @@ def cmd_show(args: argparse.Namespace) -> int:
         if snapshot_id is None or snapshot_id not in repo.snapshot_ids(game_id):
             raise UsageError(f"no snapshot {args.snapshot} for {doc['display_name']}")
         manifest = repo.load_manifest(game_id, snapshot_id)
-        emit(args, render_show_snapshot(doc, manifest), {"game": doc, "manifest": manifest})
-        return 0
+        data = {"game": doc, "manifest": manifest}
+        return emit_with_report(args, render_show_snapshot(doc, manifest), data)
     snapshots = [repo.snapshot_summary(game_id, sid) for sid in repo.snapshot_ids(game_id)]
-    emit(args, render_show_game(doc, snapshots), {"game": doc, "snapshots": snapshots})
-    return 0
+    data = {"game": doc, "snapshots": snapshots}
+    return emit_with_report(args, render_show_game(doc, snapshots), data)
 
 
 def cmd_link(args: argparse.Namespace) -> int:
     repo = Repo.open(Path(args.repo))
+    if args.collections_work and not args.game_root:  # 1.3.0 (D77)
+        from enginesave.repo import WORK_ID_RE
+        from enginesave.workrecords import link_work
+
+        if not WORK_ID_RE.match(args.collections_work):
+            raise UsageError(f"--collections-work {args.collections_work!r}: not a work id")
+        data = link_work(repo, args.game, args.collections_work)
+        emit(args, f"{data['game_id']} keeps the Collections work {args.collections_work}", data)
+        return 0
+    if not args.game_root:
+        raise UsageError("give --game-root (the folder to link), or --collections-work")
+    if args.collections_work:
+        raise UsageError("--collections-work goes alone, without --game-root")
     catalog = repo.load_catalog()
     record = repo.resolve_game(catalog, args.game)
     root = Path(os.path.abspath(args.game_root))
@@ -136,6 +184,7 @@ def cmd_confirm_source(args: argparse.Namespace) -> int:
     if not path.is_dir():
         raise UsageError(f"--path is not an existing folder: {path}")
     notes: list[str] = []
+    source_id = args.source_id
     if args.game_root:
         game = game_at(
             Path(os.path.abspath(args.game_root)),
@@ -145,14 +194,23 @@ def cmd_confirm_source(args: argparse.Namespace) -> int:
         game_id, created = register_game(repo, repo.load_catalog(), game)
         if created:
             notes.append(f"Created a record for {game.display_name}; nothing was backed up.")
-        if all(path_key(s.path) != path_key(path) for s in game.sources):
+        same = [s for s in game.sources if path_key(s.path) == path_key(path)]
+        if not same:
             notes.append(f"note: {path} is not among the save folders found for this game")
+        elif source_id is None:  # 1.3.0: the id the scan gave it
+            source_id = same[0].source_id
         catalog = repo.load_catalog()
         record = repo.resolve_game(catalog, game_id)
     else:
         catalog = repo.load_catalog()
         record = repo.resolve_game(catalog, args.game)
-    override = confirm_source(repo, catalog, record["game_id"], args.source_id, path)
+    if source_id is None:  # 1.3.0: --source-id may be left out
+        source_id = path.name or "confirmed"
+        try:
+            safe_relative_component(source_id)
+        except UnsafePathError:
+            source_id = "confirmed"
+    override = confirm_source(repo, catalog, record["game_id"], source_id, path)
     human = (
         f"Confirmed {path} as source {override['source_id']} of {record['display_name']}. "
         f"Scans and backups that use this repository now treat it as USER_CONFIRMED."

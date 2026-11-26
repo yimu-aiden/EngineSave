@@ -15,6 +15,7 @@ from enginesave.cli.common import (
     stopper,
     write_report,
 )
+from enginesave.collections_link import source_from as collections_source
 from enginesave.discovery import DEFAULT_MAX_DEPTH
 from enginesave.models import GameStatus
 from enginesave.report import render_scan
@@ -39,6 +40,7 @@ def cmd_scan(args: argparse.Namespace) -> int:
         cache=None if args.no_cache else ScanCache.load(default_path()),  # D52 3
         should_stop=stopper(args),  # D58: Ctrl+C, between folders; D73 9: --stop-file
         progress=Progress(jsonl(args)).scan_callback(),  # D73 8: --progress jsonl
+        collections=collections_source(args.collections),  # D74
     )
     report = run_scan(options)
     data = report.to_dict()

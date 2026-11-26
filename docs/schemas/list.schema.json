@@ -36,7 +36,20 @@
         "snapshot_count": { "type": "integer" },
         "latest_snapshot": { "type": ["string", "null"] },
         "cleaned_at": { "type": "string" },
+        "folder": { "type": ["string", "null"], "description": "1.3.0: the record's folder under games\\ (as the window and INDEX.txt show it); null in a library of format 1 (not migrated)" },
         "install_present": { "type": "boolean" },
+        "collections_work_ids": { "type": "array", "items": { "type": "string" }, "description": "1.3.0 (D77): the Collections works this record keeps (--game collections:<id> finds it)" },
+        "attachments": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["file_count", "total_bytes", "approximate"],
+          "description": "1.3.0 (D76): what the record's 附件 hold (approximate: more than 2000 entries, counted no further)",
+          "properties": {
+            "file_count": { "type": "integer" },
+            "total_bytes": { "type": "integer" },
+            "approximate": { "type": "boolean" }
+          }
+        },
         "latest_snapshot_at": { "type": ["string", "null"], "description": "1.2.0 (D73 5): when latest_snapshot (the newest of any reason) was made, ISO-8601 UTC" },
         "latest_reason": { "type": ["string", "null"], "description": "1.2.0 (D73 5): manual, auto, import or pre_restore; null without snapshots or when its manifest cannot be read" },
         "latest_from_install": {

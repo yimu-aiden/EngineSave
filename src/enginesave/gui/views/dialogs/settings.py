@@ -97,8 +97,28 @@ class SettingsDialog(Dialog):
             width=16,
         )
         self.language_box.pack(side="left", padx=(4, 0))
-        ttk.Label(body, text=state.config_location(app.settings_file.parent), wraplength=560).grid(
+        # 1.3.0 (D74): which folders are versions of one game, from Collections
+        self.collections = tk.StringVar(value=settings.collections_url)
+        ttk.Label(body, text=_("Collections 地址（可留空）：")).grid(
             row=11, column=0, columnspan=2, sticky="w", pady=(PAD, 0)
+        )
+        ttk.Entry(body, textvariable=self.collections, width=70).grid(
+            row=12, column=0, sticky="ew", pady=(2, 2)
+        )
+        ttk.Button(body, text=_("本机默认"), command=self.default_collections).grid(
+            row=12, column=1, padx=(PAD, 0)
+        )
+        ttk.Label(
+            body,
+            text=_(
+                "填了以后，扫描与备份会读 Collections 里记的本地副本：Collections 认作同一部的"
+                "几个版本目录归到同一条记录，新版本的存档目录或标题变了也一样。读不到时只在"
+                "日志里提示，扫描照常。"
+            ),
+            wraplength=560,
+        ).grid(row=13, column=0, columnspan=2, sticky="w")
+        ttk.Label(body, text=state.config_location(app.settings_file.parent), wraplength=560).grid(
+            row=14, column=0, columnspan=2, sticky="w", pady=(PAD, 0)
         )
         self.button(_("取消"), self.cancel, action=False)
         self.primary(_("确定"), self.accept)
@@ -110,6 +130,9 @@ class SettingsDialog(Dialog):
         )
         if chosen:
             self.override.set(os.path.normpath(chosen))
+
+    def default_collections(self) -> None:
+        self.collections.set(state.COLLECTIONS_DEFAULT)
 
     def refresh_excludes(self) -> None:
         self.exclude_list.delete(0, "end")
@@ -147,6 +170,7 @@ class SettingsDialog(Dialog):
         settings.include_candidates = bool(self.candidates.get())
         settings.include_tokens = bool(self.tokens.get())
         settings.auto_mirror = bool(self.auto_mirror.get())
+        settings.collections_url = self.collections.get().strip()
         label = self.language.get()
         if label in self.language_labels:
             settings.language = i18n.CHOICES[self.language_labels.index(label)]

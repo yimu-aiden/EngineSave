@@ -28,6 +28,7 @@ def cmd_restore(args: argparse.Namespace) -> int:
         sources=split_values([args.sources] if args.sources else None) or None,
         saves_root_override=override_from(args),
         from_install=Path(args.from_install) if args.from_install else None,  # D73 15
+        retarget=args.retarget,  # 1.3.0 (D74)
     )
     human_plan = render_restore_plan(plan)
     if args.dry_run:

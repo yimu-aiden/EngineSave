@@ -112,15 +112,12 @@ class ScanView(ttk.Frame):
         bottom.pack(side="bottom", fill="x", pady=(PAD, 0))
         self.counts = tk.StringVar(value="")
         ttk.Label(bottom, textvariable=self.counts).pack(side="left")
-        # D32: the main button backs up what is ticked in one click; 「预览…」 looks first.
+        # 1.3.0: one button: 「备份…」 shows what would be copied, 「备份」 there starts it
         self.backup_button = ttk.Button(
-            bottom, text=_("备份已勾选项"), command=app.backup_checked, default="active"
+            bottom, text=_(state.BACKUP_BUTTON), command=app.preview_backup, default="active"
         )
         self.backup_button.pack(side="right")
-        self.preview_button = ttk.Button(bottom, text=_("预览…"), command=app.preview_backup)
-        self.preview_button.pack(side="right", padx=(0, PAD))
         app.register_action(self.backup_button)
-        app.register_action(self.preview_button)
 
         games_frame = ttk.LabelFrame(self, text=_("游戏"), padding=4)
         games_frame.pack(fill="both", expand=True, pady=(4, 0))
@@ -132,8 +129,8 @@ class ScanView(ttk.Frame):
         bar.pack(side="bottom", fill="x", pady=(4, 0))
         # D33 ③: one button, its text follows the ticks; every scan ticks CONFIRMED again.
         self.toggle_button = ttk.Button(bar, text=_("全选"), command=self.toggle_all)
-        self.toggle_button.pack(side="left")
-        ttk.Button(bar, text=_("查看详情"), command=self.details).pack(side="left", padx=PAD)
+        self.toggle_button.pack(side="left", padx=(0, PAD))
+        # 1.3.0: no 「查看详情」 button: double-click a row, or its right-click menu
         ttk.Label(
             bar, text=_("点“勾选”列或按空格键切换勾选；双击一行查看详情；右键打开或复制文件夹。")
         ).pack(side="left")
@@ -412,9 +409,11 @@ class ScanView(ttk.Frame):
         if game is None:
             return None
         menu = folder_menu(self, self.app, state.game_folders(game))
+        first = []
         if game.status is not GameStatus.UNSUPPORTED:
-            menu.insert_command(
-                0, label=_(state.LINK_TITLE) + "…", command=lambda: self.app.confirm_link(game)
-            )
-            menu.insert_separator(1)
+            first.append((_(state.LINK_TITLE) + "…", lambda: self.app.confirm_link(game)))
+        first.append((_("查看详情"), lambda: game_details_dialog(self.app, game)))  # 1.3.0
+        for index, (label, command) in enumerate(first):
+            menu.insert_command(index, label=label, command=command)
+        menu.insert_separator(len(first))
         return menu

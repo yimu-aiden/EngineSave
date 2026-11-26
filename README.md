@@ -28,9 +28,20 @@ The window language follows the system setting; change it in **Settings… → L
 1. **Choose a library**: an empty folder.
 2. **Add scan roots**: the folders that hold your games.
 3. **Scan** (F5, read only), check what was found, and tick the games to back up.
-4. **Back up ticked** with the games closed, then **Verify** on the Library page.
+4. With the games closed, click **Back up…**, look at what will be copied and click **Backup**; then **Verify** on the Library page.
 
 To restore, select a record on the Library page and click **Restore…**. If the target already has saves, a `pre_restore` snapshot is taken first. Files in the target that are not in the snapshot are never deleted.
+
+### Several versions of one game (1.3.0)
+
+Versions that keep their saves in the same place are one record by themselves. When a new version keeps them under another name (a Ren'Py game's save directory, or a title with the version in it, changed):
+
+- **Collections**: with **Settings… → Collections address** (or `--collections http://127.0.0.1:7788` on the command line), the version folders the Collections game library keeps as copies of one game go into one record, and their folders are linked to it.
+- **Restoring the old version's saves into the new one**: in **Restore…** choose the new version's folder and tick *This is a newer version of this game…* (`restore --game-root NEW --retarget`). The saves go where the new version keeps them, and its folder is linked to the record. A folder linked already (**Confirm / link…**, `link`) needs no tick.
+
+### Attachments (附件, 1.3.0)
+
+Each record can keep files that belong with the game -- guides, patches, notes -- in `games\<record folder>\附件\`: plain files, outside every snapshot. On the Library page select a record: below its snapshots are **Open attachments folder** and **Add attachments…**. Command line: `enginesave attachments list|add|open --repo DIR --game X` (`add [--move] FILE...`). Removing a whole record keeps its attachments unless `remove --with-attachments`; a mirror copies them; exports leave them out.
 
 ### Supported engines
 
@@ -95,7 +106,8 @@ enginesave-cli restore --repo "E:\Backup\EngineSave" --game "<name or id>" `
 - **`--mirror`** mirrors to the folder of the library's last successful mirror, **`--auto-mirror`** does so when the window's setting "mirror automatically" is on; `result.mirror.status` is `ok`, `skipped` or `failed`, and a failed mirror never changes the backup's exit code.
 - **`--progress jsonl`** (`scan`, `backup`): one JSON object per line on stderr (`{"event":"progress","phase":"scan"|"backup"|"mirror",...}`). **`--stop-file PATH`**: stop at the next safe point once the file exists (exit code 130).
 - **`restore --game-root NEW`**: when a snapshot holds the local saves of several installs, those of `--from-install PATH` are restored, else of the snapshot's `from_install`. `NEW` may be a folder the library has never seen.
-- **`list --json`**: `latest_snapshot_at`, `latest_reason`, `latest_from_install`, `installs` per record, `stats.mirror_folder`.
+- **`list --json`**: `latest_snapshot_at`, `latest_reason`, `latest_from_install`, `installs` per record, `stats.mirror_folder`; 1.3.0: `folder` per record. `list` and `show` take `--report FILE.json` (1.3.0) for output too large to read from stdout.
+- **1.3.0**: `scan`/`backup --collections URL|FILE` (copies read from `GET <URL>/api/enginesave/copies`; the scan report's `collections`), `restore --game-root NEW --retarget` (`plan.retargeted`, `result.linked`), `--game` also takes a record's folder name or a game folder it knows, `remove --snapshot latest`, `confirm-source` without `--source-id`; `attachments list|add|open|merge`, `--game collections:<work id>` (with `--title` a work without a record gets an attachment-only one), `link --collections-work`. See [docs/usability-1.3.0.md](docs/usability-1.3.0.md).
 - **Write lock**: every command and window action that writes into a library holds `<library>\enginesave.lock` while it runs; another one stops at once with exit code 4 (`{"error":"library_busy","holder":{...}}` with `--json`). A lock left by a process that is gone is removed by itself. Reading (`list`, `show`, `verify`, previews) is never blocked.
 - **Window**: `EngineSave.exe --library DIR --game ID` opens that library (this time only) on the Library page with the record selected.
 
@@ -143,9 +155,20 @@ EngineSave 用于通用备份游戏，按引擎备份而非游戏id，并有清�
 1. **选备份库**：一个空文件夹。
 2. **添加扫描根目录**：存放游戏的文件夹。
 3. **扫描**（F5，只读），核对结果，勾选要备份的游戏。
-4. 关掉游戏后点**备份已勾选项**，再到备份库页**校验**。
+4. 关掉游戏后点**备份…**，看过要复制的内容再点**备份**；然后到备份库页**校验**。
 
 恢复：在备份库页选中记录，点**恢复…**。目标里已有存档时，会先自动做一个 `pre_restore` 安全快照。目标里快照没有的文件不会删除。
+
+### 同一个游戏的几个版本（1.3.0）
+
+存档放在同一处的几个版本本来就是一条记录。新版本的存档换了名字（Ren'Py 的存档目录变了，或标题里带版本号）时：
+
+- **Collections**：在**设置… → Collections 地址**里填上（命令行 `--collections http://127.0.0.1:7788`），Collections 游戏库里记作同一部作品的几个版本目录归到同一条记录，并关联到它。
+- **把旧版本的存档恢复进新版本**：在**恢复…**里选新版本的目录，勾选"这是这个游戏的新版本、存档换了名字…"（`restore --game-root 新目录 --retarget`）。存档放到新版本自己的存档位置，新版本的目录关联到这条记录。已经关联过的目录（**确认 / 关联…**、`link`）不用勾。
+
+### 附件（1.3.0）
+
+每条记录可以在 `games\<记录文件夹>\附件\` 里放随游戏保存的文件——攻略、补丁、笔记：普通文件，不在任何快照里。在备份库页选中记录，快照下面有**打开附件文件夹**、**添加附件…**。命令行：`enginesave attachments list|add|open --repo DIR --game X`（`add [--move] 文件...`）。删除整条记录时附件默认留下，`remove --with-attachments` 才一起删；镜像会带上附件；导出不带。
 
 ### 支持的引擎
 
@@ -210,7 +233,8 @@ enginesave-cli restore --repo "E:\Backup\EngineSave" --game "<名称或 ID>" `
 - **`--mirror`** 镜像到这个库上次成功镜像的文件夹，**`--auto-mirror`** 照窗口设置里"备份完成后自动镜像"的开关决定；`result.mirror.status` 是 `ok`、`skipped` 或 `failed`，镜像失败不影响备份的退出码。
 - **`--progress jsonl`**（`scan`、`backup`）：stderr 每行一个 JSON（`{"event":"progress","phase":"scan"|"backup"|"mirror",...}`）。**`--stop-file PATH`**：这个文件出现后在下一个安全点停下（退出码 130）。
 - **`restore --game-root NEW`**：快照里有几个安装的本地存档时，恢复 `--from-install PATH` 那个安装的，不给时用快照的 `from_install`。`NEW` 可以是备份库从没见过的目录。
-- **`list --json`**：每条记录有 `latest_snapshot_at`、`latest_reason`、`latest_from_install`、`installs`，`stats` 有 `mirror_folder`。
+- **`list --json`**：每条记录有 `latest_snapshot_at`、`latest_reason`、`latest_from_install`、`installs`，`stats` 有 `mirror_folder`；1.3.0 起每条记录还有 `folder`。`list`、`show` 可以加 `--report FILE.json`（1.3.0），输出太大时读文件。
+- **1.3.0**：`scan`/`backup --collections URL|FILE`（读 `GET <URL>/api/enginesave/copies`；扫描报告的 `collections`），`restore --game-root 新目录 --retarget`（`plan.retargeted`、`result.linked`），`--game` 也认记录的文件夹名与它认识的游戏目录，`remove --snapshot latest`，`confirm-source` 可以不给 `--source-id`；`attachments list|add|open|merge`，`--game collections:<作品 id>`（带 `--title` 时还没有记录的作品建一条只有附件的记录），`link --collections-work`。见 [docs/usability-1.3.0.md](docs/usability-1.3.0.md)。
 - **写锁**：所有写备份库的命令与窗口操作，进行时都持有 `<备份库>\enginesave.lock`；另一个写操作会立刻以退出码 4 退出（`--json` 时输出 `{"error":"library_busy","holder":{...}}`）。持锁进程已经不在时，旧锁会自动清掉。读（`list`、`show`、`verify`、各种预览）从不受影响。
 - **窗口**：`EngineSave.exe --library DIR --game ID` 打开那个备份库（只这一次）的备份库页并选中这条记录。
 

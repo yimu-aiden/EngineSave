@@ -20,7 +20,7 @@ if TYPE_CHECKING:
 
 INTRO = (
     "这些目录在全局存档根目录下，找不到对应的游戏本体（UNLINKED，默认不备份）。"
-    "勾选的目录会和扫描页勾选的游戏一起，由「备份已勾选项」备份进当前备份库。"
+    "勾选的目录会和扫描页勾选的游戏一起，由「备份…」备份进当前备份库。"
 )
 
 
@@ -62,7 +62,7 @@ class UnlinkedDialog(Dialog):
         self.tree.bind("<space>", self.space)
         self.link_column(self.tree)
         self.button(_("关闭"), self.cancel, action=False)
-        self.backup_button = self.primary(_("备份已勾选项"), self.backup)
+        self.backup_button = self.primary(_(state.BACKUP_BUTTON), self.backup)
         self.refresh_buttons()
         self.show()
 
@@ -105,10 +105,10 @@ class UnlinkedDialog(Dialog):
         set_enabled(self.backup_button, bool(games or unlinked) and not self.busy)
 
     def backup(self) -> None:
-        """「备份已勾选项」 right here: the ticked folders and the games ticked on the scan
-        page, the way the scan page's button does it (one click, the result dialog)."""
+        """「备份…」 right here: the ticked folders and the games ticked on the scan page, the
+        way the scan page's button does it (the preview first, 「备份」 there starts it)."""
         games, unlinked = self.app.selection.counts()
         if not games and not unlinked:
             return
         self.close()
-        self.app.backup_checked()
+        self.app.preview_backup()

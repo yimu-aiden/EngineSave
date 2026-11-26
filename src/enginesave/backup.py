@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from enginesave import __version__, layout, registry, store
+from enginesave.collections_link import Works, group_key
 from enginesave.discovery import DEFAULT_MAX_DEPTH
 from enginesave.engines.base import Detector
 from enginesave.engines.common import garbled, misread
@@ -60,6 +61,7 @@ from enginesave.repo import (
     FORMAT_VERSION,
     MANIFEST_FORMAT,
     Repo,
+    add_work_id,
     cleaned_at,
     destination_state,
     record_version,
@@ -97,8 +99,22 @@ class PlannedGame:
     game_id: str | None = None  # known catalog record; None → a new record is created
     # 1.2.0 (D73 14): {"game_root", "game_version"} of the install the snapshot comes from
     from_install: dict[str, Any] | None = None
+    # 1.3.0: for the text plan only -- records a new record may be the same game as
+    # ([{"game_id", "name", "reason"}])
+    similar: list[dict[str, str]] = field(default_factory=list)
+
+    @property
+    def collections_note(self) -> str:
+        """1.3.0 (D74): a line for the text plan when Collections chose the record."""
+        info = self.game.collections if self.game is not None else None
+        if not info or info.get("record_by") != "collections":
+            return ""
+        return f"Collections: a version of {info.get('title')}; its folder is linked to the record"
 
     def to_dict(self) -> dict[str, Any]:
+        extra = {}  # 1.3.0 (D74): only when a Collections source was read
+        if self.game is not None and self.game.collections is not None:
+            extra["collections"] = self.game.collections
         return {
             "kind": self.kind,
             "display_name": self.display_name,
@@ -106,6 +122,7 @@ class PlannedGame:
             "game_root": self.game.game_root if self.game else None,
             "game_id": self.game_id,
             "from_install": self.from_install,
+            **extra,
             "sources": [
                 {
                     "source_id": ps.source.source_id,
@@ -162,6 +179,10 @@ class BackupResult:
     cancelled: bool = False  # D58: stopped between files; what is in ``results`` is done
     pruned: dict[str, Any] | None = None  # 1.2.0 (D73 3): what --keep-auto removed
     mirror: dict[str, Any] | None = None  # 1.2.0 (D73 16): the mirror after the backup
+    # 1.3.0 (D74): folders linked to their record because Collections said which it is
+    linked: list[dict[str, Any]] = field(default_factory=list)
+    # 1.3.0 (D77): attachment-only records of a work merged into the record backed up
+    absorbed: list[dict[str, Any]] = field(default_factory=list)
 
     @property
     def exit_code(self) -> int:
@@ -171,6 +192,10 @@ class BackupResult:
         data: dict[str, Any] = {"results": [vars(r) for r in self.results], "skipped": self.skipped}
         if self.cancelled:  # 0.9.0: only when it was stopped
             data["cancelled"] = True
+        if self.linked:  # 1.3.0: only when a folder was linked
+            data["linked"] = self.linked
+        if self.absorbed:  # 1.3.0 (D77): only when it happened
+            data["absorbed"] = self.absorbed
         if self.pruned is not None:  # 1.2.0: only with --keep-auto
             data["pruned"] = self.pruned
         if self.mirror is not None:  # 1.2.0: only with --mirror or --auto-mirror
@@ -330,6 +355,29 @@ def from_install(
     return {"game_root": str(chosen[0]["game_root"]), "game_version": chosen[0].get("game_version")}
 
 
+SIMILAR_REASONS = {
+    "config_name_match": "same name without the version",
+    "dir_name_match": "same folder or program name",
+    "shared_save_directory": "same save directory",
+    "collections_same_work": "Collections keeps it as the same game",
+}
+
+
+def similar_records(game: DetectedGame, known: Sequence[dict]) -> list[dict[str, str]]:
+    """1.3.0: the records a game about to get a new record was suggested to link to, with
+    their names: the text plan says so before a game is split over two records."""
+    names = {str(r.get("game_id")): r.get("display_name") or "?" for r in known}
+    out = []
+    for suggestion in game.link_suggestions:
+        game_id = str(suggestion.get("game_id"))
+        reason = str(suggestion.get("reason"))
+        if game_id in names and reason in SIMILAR_REASONS:
+            out.append(
+                {"game_id": game_id, "name": names[game_id], "reason": SIMILAR_REASONS[reason]}
+            )
+    return out
+
+
 def plan_backup(
     report: ScanReport,
     dest: Path,
@@ -369,18 +417,19 @@ def plan_backup(
         if tokens is not None:
             sources.append(_plan_source(tokens))
         game_id = game.known_game_id or matched.get(id(game))
-        plan.games.append(
-            PlannedGame(
-                "game",
-                game.display_name,
-                game.identity.config_version,
-                sources,
-                game,
-                None,
-                game_id,
-                from_install(game, eligible, select_roots),
-            )
+        planned = PlannedGame(
+            "game",
+            game.display_name,
+            game.identity.config_version,
+            sources,
+            game,
+            None,
+            game_id,
+            from_install(game, eligible, select_roots),
         )
+        if game_id is None:
+            planned.similar = similar_records(game, known)
+        plan.games.append(planned)
     if include_unlinked is not None:
         available = {u.name.casefold(): u for u in report.unlinked}
         if include_unlinked:
@@ -589,8 +638,11 @@ def record_snapshot(
         for key, value in planned.game.identity.stored().items():
             if value and not doc["identity"].get(key):
                 doc["identity"][key] = value
+        if not doc.get("engine"):  # 1.3.0 (D77): a record that held only attachments
+            doc["engine"] = planned.game.engine
         if not doc.get("engine_version"):
             doc["engine_version"] = planned.game.engine_version
+        keep_work(doc, planned.game)
         for install in planned.game.installs:
             touch_install(doc["installs"], install, now)
     known = {t["source_id"]: i for i, t in enumerate(doc["source_templates"])}
@@ -608,6 +660,14 @@ def record_snapshot(
     if rekeyed:
         _rename_garbled_folder(repo, catalog, game_id)
     return doc
+
+
+def keep_work(doc: dict[str, Any], game: DetectedGame) -> bool:
+    """1.3.0 (D77): a game Collections keeps as a work: its record remembers the work, so that
+    ``--game collections:<work id>`` finds it. ``True`` when the work is new to the record."""
+    info = game.collections or {}
+    work = info.get("work_id") if isinstance(info, dict) else None
+    return add_work_id(doc, work) if isinstance(work, str) and work else False
 
 
 def _rename_garbled_folder(repo: Repo, catalog: dict, game_id: str) -> None:
@@ -709,6 +769,8 @@ def update_catalog_entry(repo: Repo, catalog: dict, doc: dict) -> None:
     }
     if not repo.old_format:  # D67 1: the record's folder under games/
         entry["folder"] = repo.folder_name(doc["game_id"])
+    if doc.get("collections_work_ids"):  # 1.3.0 (D77): the Collections works it keeps
+        entry["collections_work_ids"] = list(doc["collections_work_ids"])
     if removed := cleaned_at(doc):  # the game was cleaned up (D26); absent otherwise
         entry["cleaned_at"] = removed
     games = catalog["games"]
@@ -843,20 +905,34 @@ def execute_backup(
         raise UsageError("--keep-auto must be 1 or more")
     catalog = repo.load_catalog()
     result = BackupResult(skipped=list(plan.skipped))
+    created: dict[str, str] = {}  # 1.3.0 (D74): Collections work → the record made for it now
     try:
         for index, planned in enumerate(plan.games):
             stop_point(should_stop)
             if progress is not None:
                 progress(index, len(plan.games), planned.display_name)
+            work = group_key(planned.game)
+            if planned.game_id is None and work in created:  # another version of that game
+                planned.game_id = created[work]
+                assert planned.game is not None and planned.game.collections is not None
+                planned.game.collections["record_by"] = "collections"
             same = unchanged_snapshot(repo, planned) if skip_unchanged else None
             if same is not None:
                 result.results.append(note_unchanged(repo, catalog, planned, same))
                 continue
             done = backup_game(repo, catalog, planned, reason=reason, should_stop=should_stop)
             result.results.append(done)
+            if work and done.game_id and done.status != "failed":
+                created.setdefault(work, done.game_id)
     except Stopped:
         result.cancelled = True
     pin_shared_folders(repo, plan, result)
+    result.linked = pin_collections_links(repo, plan, result)
+    if any(p.game is not None and p.game.collections for p in plan.games):
+        from enginesave.workrecords import absorb  # 1.3.0 (D77)
+
+        ids = [r.game_id if r.status != "failed" else None for r in result.results]
+        result.absorbed = absorb(repo, [p.game for p in plan.games], ids)
     if keep_auto is not None and not result.cancelled:
         ids = [r.game_id for r in result.results if r.game_id and r.status != "failed"]
         result.pruned = prune_auto(repo, ids, keep_auto, should_stop=should_stop)
@@ -872,7 +948,8 @@ def unchanged_snapshot(repo: Repo, planned: PlannedGame) -> str | None:
     """The record's latest snapshot (of any reason) when the saves ``planned`` would back up
     now are exactly what it holds -- the same sources, the same files, byte for byte (SHA-256)
     -- else ``None``. A partial latest snapshot, a file that cannot be read or listed, or a
-    record without snapshots never counts as unchanged."""
+    record without snapshots never counts as unchanged. 1.3.0: when that latest snapshot came
+    from another install of the game, the newest one from this install is compared instead."""
     game_id = planned.game_id
     if game_id is None or not repo.has_game(game_id):
         return None
@@ -883,6 +960,10 @@ def unchanged_snapshot(repo: Repo, planned: PlannedGame) -> str | None:
         manifest = repo.load_manifest(game_id, ids[-1])
     except EngineSaveError:
         return None
+    compared = ids[-1]
+    other = _same_install_snapshot(repo, game_id, ids, manifest, planned)
+    if other is not None:  # 1.3.0: the latest came from another version's folder
+        compared, manifest = other
     if manifest.get("status") != "complete" or manifest.get("errors"):
         return None
 
@@ -941,7 +1022,37 @@ def unchanged_snapshot(repo: Repo, planned: PlannedGame) -> str | None:
             return None
         if digest != stored[key][1]:
             return None
-    return ids[-1]
+    return compared
+
+
+def _install_key(found: Mapping[str, Any] | None) -> str | None:
+    root = found.get("game_root") if isinstance(found, Mapping) else None
+    return path_key(root) if isinstance(root, str) and root else None
+
+
+def _same_install_snapshot(
+    repo: Repo,
+    game_id: str,
+    ids: Sequence[str],
+    latest: Mapping[str, Any],
+    planned: PlannedGame,
+) -> tuple[str, dict[str, Any]] | None:
+    """1.3.0 (D74): when the record's latest snapshot came from another install (two versions
+    of a game backed up into one record by turns), the newest snapshot that came from this
+    one: what "unchanged" is measured against. ``None`` when the latest came from this install
+    or names none -- then the latest is used, as in 1.2.0."""
+    ours = _install_key(planned.from_install)
+    theirs = _install_key(latest.get("from_install"))
+    if ours is None or theirs is None or theirs == ours:
+        return None
+    for snapshot_id in reversed(ids[:-1]):
+        try:
+            manifest = repo.load_manifest(game_id, snapshot_id)
+        except EngineSaveError:
+            continue
+        if _install_key(manifest.get("from_install")) == ours:
+            return snapshot_id, manifest
+    return None
 
 
 def note_unchanged(repo: Repo, catalog: dict, planned: PlannedGame, same: str) -> GameResult:
@@ -954,7 +1065,9 @@ def note_unchanged(repo: Repo, catalog: dict, planned: PlannedGame, same: str) -
         before = copy.deepcopy(doc.get("installs") or [])
         for install in planned.game.installs:
             touch_install(doc.setdefault("installs", []), install, now)
-        if [i.get("game_root") for i in doc["installs"]] != [i.get("game_root") for i in before]:
+        new_work = keep_work(doc, planned.game)  # 1.3.0 (D77)
+        roots_now = [i.get("game_root") for i in doc["installs"]]
+        if new_work or roots_now != [i.get("game_root") for i in before]:
             doc["updated_at"] = now
             repo.save_game(doc)
             update_catalog_entry(repo, catalog, doc)
@@ -1064,6 +1177,44 @@ def pin_shared_folders(repo: Repo, plan: BackupPlan, result: BackupResult) -> li
     return written
 
 
+def pin_collections_links(repo: Repo, plan: BackupPlan, result: BackupResult) -> list[dict]:
+    """1.3.0 (D74): a game backed up into a record because Collections said it is a version
+    of that game (no 6.6 rule found the record: its save directory or title changed) has its
+    folders linked to the record (``link_root``, 6.6 rule 6), so that later scans -- with or
+    without Collections -- keep it there. A folder linked already is left alone."""
+    catalog = repo.load_catalog()
+    linked = {
+        path_key(o["game_root"])
+        for o in catalog["overrides"]
+        if o.get("type") == "link_root" and o.get("game_root")
+    }
+    now = iso_utc(utc_now())
+    written = []
+    for planned, outcome in zip(plan.games, result.results, strict=False):  # D58: maybe fewer
+        game = planned.game
+        info = game.collections if game is not None else None
+        if not info or info.get("record_by") != "collections":
+            continue
+        if outcome.status == "failed" or not outcome.game_id:
+            continue
+        for install in [game.game_root, *(i["game_root"] for i in game.installs)]:
+            if not install or path_key(install) in linked:
+                continue
+            override = {
+                "game_id": outcome.game_id,
+                "type": "link_root",
+                "game_root": str(install),
+                "linked_at": now,
+                "linked_by": "collections",
+            }
+            catalog["overrides"].append(override)
+            linked.add(path_key(install))
+            written.append(override)
+    if written:
+        repo.save_catalog(catalog)
+    return written
+
+
 def prepare_repository(
     dest: Path,
     roots: Sequence[Path],
@@ -1096,6 +1247,7 @@ def prepare_backup(
     should_stop: StopCheck = None,
     scan_progress: Callable[[int, str], None] | None = None,
     scan_unlinked: bool = True,
+    collections: str | Works | None = None,
     **plan_options: Any,
 ) -> BackupPlan:
     """Safety checks, scan and plan. Nothing is written to the library or the scanned folders;
@@ -1126,6 +1278,7 @@ def prepare_backup(
             progress=scan_progress,  # 1.2.0 (D73 8)
             # D73 1: one game's folders only: the orphaned save folders need not be listed
             include_unlinked=scan_unlinked or plan_options.get("include_unlinked") is not None,
+            collections=collections,  # 1.3.0 (D74)
         )
     )
     known: list[dict] = []

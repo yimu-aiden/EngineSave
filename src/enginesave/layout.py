@@ -338,6 +338,7 @@ def snapshot_readme(
         "",
         "这个文件夹里 data 下的文件是真实的存档文件，直接复制即可。复制后文件的修改时间可能变成"
         "复制的时间；原来的修改时间以本文件为准。放回之前先退出游戏，并把那里现有的存档另存一份。",
+        "这个游戏的附件（攻略、补丁等）不在快照里，在记录文件夹的“附件”文件夹里。",
         "",
         "各文件夹放回哪里",
         "----------------",
@@ -361,7 +362,8 @@ def snapshot_readme(
         "",
         "The files below data are the real save files: copy them back as they are. A copy may",
         "get the time of copying; the original modification times are listed here. Quit the",
-        "game first, and keep a copy of the saves that are there now.",
+        "game first, and keep a copy of the saves that are there now. The game's attachments",
+        "(guides, patches) are not in the snapshot: they are in the record folder's 附件 folder.",
         "",
         "Where each folder goes",
         "----------------------",
@@ -403,6 +405,7 @@ def index_text(repo: Any, env: Mapping[str, str] | None = None) -> str:
         f"备份库：{repo.root}",
         f"更新于：{now}（本地时间），共 {len(entries)} 条记录，按名称排序",
         "每条记录的文件夹在 games 下；每个快照文件夹里的 README.txt 说明怎样把存档放回去。",
+        "记录文件夹里的“附件”文件夹放攻略、补丁等随游戏保存的文件，是普通文件，直接打开即可。",
         "",
     ]
     en = [
@@ -412,7 +415,8 @@ def index_text(repo: Any, env: Mapping[str, str] | None = None) -> str:
         f"Library: {repo.root}",
         f"Updated: {now} (local time), {len(entries)} records by name",
         "Each record's folder is below games; the README.txt in each snapshot folder says how",
-        "to put the saves back.",
+        "to put the saves back. A record folder's 附件 (attachments) folder holds files kept",
+        "with the game -- guides, patches -- as plain files.",
         "",
     ]
     for e in entries:
@@ -425,6 +429,8 @@ def index_text(repo: Any, env: Mapping[str, str] | None = None) -> str:
         ]
         zh += [f"  游戏目录：{p}{'' if here else '（不在）'}" for p, here in e["installs"]]
         zh += [f"  存档目录：{p}" for p in e["saves"]]
+        if e["attachments"]:  # 1.3.0 (D76)
+            zh.append(f"  附件：{e['attachments']} 个文件（games\\{e['folder']}\\附件）")
         zh.append("")
         en += [
             f"{e['name']}{kind_en}",
@@ -433,6 +439,8 @@ def index_text(repo: Any, env: Mapping[str, str] | None = None) -> str:
         ]
         en += [f"  Game folder: {p}{'' if here else ' (not there)'}" for p, here in e["installs"]]
         en += [f"  Save folder: {p}" for p in e["saves"]]
+        if e["attachments"]:
+            en.append(f"  Attachments: {e['attachments']} file(s) (games\\{e['folder']}\\附件)")
         en.append("")
     return "\r\n".join([*zh, "", *en]) + "\r\n"
 
@@ -495,14 +503,28 @@ def _index_entry(repo: Any, record: Mapping[str, Any], env: Mapping[str, str]) -
     saves = _save_places(repo, game_id, ids[-1] if ids else None, doc, env, bool(installs))
     return {
         "name": str(record.get("display_name") or game_id),
-        "engine": engine_name(str(record.get("engine") or "renpy")),
+        # 1.3.0 (D77): a record with attachments only has no engine until its first backup
+        # (an old record without the key is Ren'Py's, as before)
+        "engine": engine_name(str(record.get("engine", "renpy")))
+        if record.get("engine", "renpy")
+        else "-",
         "kind": record.get("kind", "game"),
         "folder": repo.folder_name(game_id),
         "snapshots": len(ids),
         "latest": _local(latest) if latest else "",
         "installs": [(p, p in present) for p in installs],
         "saves": list(dict.fromkeys(saves)),
+        "attachments": _attachment_count(repo, game_id),  # 1.3.0 (D76)
     }
+
+
+def _attachment_count(repo: Any, game_id: str) -> int:
+    from enginesave.attachments import listing
+
+    try:
+        return listing(game_id, repo.game_dir(game_id), limit=2000).file_count
+    except EngineSaveError:
+        return 0
 
 
 def write_index(repo: Any, env: Mapping[str, str] | None = None) -> bool:

@@ -12,6 +12,15 @@ from enginesave.gui.i18n import _
 if TYPE_CHECKING:
     from enginesave.restore import RestorePlan
 
+# 1.3.0 (D74): restore into a newer version whose saves are kept under another name
+RETARGET_LABEL = (
+    "这是这个游戏的新版本、存档换了名字（存档目录或标题变了）："
+    "放到这个版本自己的存档位置，并把它关联到这条记录"
+)
+RETARGET_HINT = (
+    "\n如果所选目录是这个游戏的新版本、只是存档换了名字，勾选上面的“这是这个游戏的新版本…”。"
+)
+
 
 def from_install_text(summary: dict[str, Any]) -> str:
     """1.2.0 (D73 14): 「来自 0.4.0」 beside a snapshot, the version of the install it was

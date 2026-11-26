@@ -49,6 +49,8 @@ from pathlib import Path
 from typing import Any
 
 from enginesave import layout
+from enginesave.attachments import folder_of as attachments_of
+from enginesave.attachments import mirror_files
 from enginesave.errors import (
     EngineSaveError,
     FatalError,
@@ -123,6 +125,7 @@ class MirrorResult:
     folders_kept: list[str] = field(default_factory=list)  # named otherwise in the mirror
     cancelled: bool = False  # stopped while copying: a smaller mirror (D58)
     verify_stopped: bool = False  # D59 2: copied completely, stopped while verifying
+    attachments_copied: int = 0  # 1.3.0 (D76): files of the records' 附件 copied
 
     @property
     def verified(self) -> bool | None:
@@ -154,6 +157,7 @@ class MirrorResult:
             "objects": None if self.objects is None else self.objects.to_dict(),
             "objects_recopied": self.objects_recopied,  # 0.10.0 (D59)
             "files_replaced": self.files_replaced,
+            "attachments_copied": self.attachments_copied,  # 1.3.0 (D76)
         }
         if self.migrated:  # 0.11.0 (D67 8): only when it happened
             data["migrated"] = True
@@ -508,6 +512,13 @@ def mirror_repo(
                 label = f"{record.get('display_name') or game_id} {sid}"
                 if _mirror_snapshot(repo, dest, game_id, sid, manifest, result, label, step):
                     result.snapshots_copied += 1
+            # 1.3.0 (D76): the record's attachments, new and changed files; none deleted there
+            copied, problems = mirror_files(
+                attachments_of(repo.game_dir(game_id)), attachments_of(dest.game_dir(game_id))
+            )
+            result.attachments_copied += copied
+            name = record.get("display_name") or game_id
+            result.failed += [f"{name} {problem}" for problem in problems]
     except Stopped:
         result.cancelled = True
     finally:

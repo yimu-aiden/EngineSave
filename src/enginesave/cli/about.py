@@ -26,6 +26,7 @@ JSON_FORMATS = {
     "import": 1,
     "remove": 1,
     "mirror": 1,
+    "attachments": 1,  # 1.3.0 (D76)
 }
 
 

@@ -32,8 +32,26 @@ def cmd_remove(args: argparse.Namespace) -> int:
         raise UsageError("give --game (or --tmp for the temporary folders)")
     repo = Repo.open(Path(args.repo))
     found = inventory(repo)
-    plan = plan_remove(repo, repo.load_catalog(), [(args.game, args.snapshot or None)], found)
+    catalog = repo.load_catalog()
+    snapshots = args.snapshot or None
+    if snapshots and "latest" in snapshots:  # 1.3.0: as restore, show, export and cleanup
+        game_id = repo.resolve_game(catalog, args.game)["game_id"]
+        latest = repo.latest_snapshot(game_id)
+        if latest is None:
+            raise UsageError(f"--snapshot latest: {args.game} has no snapshots")
+        snapshots = list(dict.fromkeys(latest if s == "latest" else s for s in snapshots))
+    plan = plan_remove(
+        repo, catalog, [(args.game, snapshots)], found, with_attachments=args.with_attachments
+    )
     preview = render_remove_plan(plan.to_dict())
+    for item in plan.items:  # 1.3.0 (D76)
+        held = item.attachments
+        if item.whole and held:
+            fate = (
+                "deleted too" if plan.with_attachments else "kept (--with-attachments deletes them)"
+            )
+            count, where = held["file_count"], held["folder"]
+            preview += f"\n附件 of {item.display_name}: {count} file(s) in {where}: {fate}"
     if args.dry_run or not args.yes:
         human = f"{preview}\n\nNothing was deleted. Add --yes to delete (this cannot be undone)."
         emit(args, human, {"dry_run": True, "plan": plan.to_dict(), "result": None})

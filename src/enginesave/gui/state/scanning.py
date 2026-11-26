@@ -121,6 +121,7 @@ LIBRARY_SWITCHED = "换了备份库，请重新扫描"  # D61 ④
 EXCLUDES_LABEL = (  # D63
     "扫描时跳过的文件夹（不扫描，也不进入；可以选文件夹，也可以写通配模式，如 *\\小说*）："
 )
+COLLECTIONS_DEFAULT = "http://127.0.0.1:7788"  # 1.3.0 (D74): Collections on this computer
 
 
 # folder names that have nothing in common: a pattern that skips them all skips everything

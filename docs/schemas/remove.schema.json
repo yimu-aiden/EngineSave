@@ -35,7 +35,18 @@
         "snapshot_count": { "type": "integer", "description": "all snapshots of the record" },
         "files": { "type": "integer" },
         "bytes": { "type": "integer" },
-        "install_present": { "type": "boolean", "description": "one of its game folders is on disk now" }
+        "install_present": { "type": "boolean", "description": "one of its game folders is on disk now" },
+        "attachments": {
+          "type": ["object", "null"],
+          "additionalProperties": false,
+          "required": ["folder", "file_count", "total_bytes"],
+          "description": "1.3.0 (D76): the record's 附件 folder when it holds something; a whole record's are kept unless --with-attachments",
+          "properties": {
+            "folder": { "type": "string" },
+            "file_count": { "type": "integer" },
+            "total_bytes": { "type": "integer" }
+          }
+        }
       }
     },
     "plan": {
@@ -57,7 +68,8 @@
         "snapshots": { "type": "integer" },
         "freed_bytes": { "type": "integer", "description": "about: objects only these snapshots use, plain copies, manifests" },
         "gc_blocked": { "type": ["string", "null"], "description": "why unused objects will not be removed" },
-        "games_not_installed": { "type": "integer" }
+        "games_not_installed": { "type": "integer" },
+        "with_attachments": { "type": "boolean", "description": "1.3.0 (D76): --with-attachments: a whole record's 附件 go too" }
       }
     },
     "result": {
